@@ -16,6 +16,35 @@
 - 校验机器状态与发布清单，输出 1080×1350 PNG 和联系表。
 - 提供可选 Codex `Stop` hook，防止在自审或返修尚未完成时提前结束。
 
+## 作品展示
+
+以下是使用本工作流创作的单帧示例。它们展示的是拍摄者位置、偶然遮挡、设备限制和私人相册感，不代表完整项目的全部分镜。
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/showcase/liminal-space.jpg" alt="阈限空间中的受限窥视机位" width="100%">
+      <br><strong>阈限空间</strong>：从狭窄遮挡后记录重复空间
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/showcase/peach-blossom-spring.jpg" alt="船上回收无人机的第一视角照片" width="100%">
+      <br><strong>桃花源记</strong>：船上调查者回收无人机
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/showcase/dog-calamity.jpg" alt="雨后遛狗时随手拍下的私人相册照片" width="100%">
+      <br><strong>狗灾</strong>：雨后遛狗的普通相册基线
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/showcase/shambhala.jpg" alt="山顶手持旧照片比对远方城市的调查画面" width="100%">
+      <br><strong>香巴拉传说</strong>：用旧照片比对远方城市
+    </td>
+  </tr>
+</table>
+
+这些图片是虚构项目的 AI 辅助创作示例，不是新闻、历史档案或真实异常事件证据。展示图片 © isLiuyx1，仅供项目演示，不包含在本仓库的 MIT 软件许可证中。
+
 ## 工作流
 
 ```text
