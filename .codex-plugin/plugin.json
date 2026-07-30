@@ -1,0 +1,33 @@
+{
+  "name": "oh-my-folkstoryphoto",
+  "version": "2.1.0",
+  "description": "Create self-reviewed Chinese folk-story photo carousels with period-plausible candid capture and controlled repair.",
+  "author": {
+    "name": "isliuyx"
+  },
+  "license": "MIT",
+  "keywords": [
+    "folk-story",
+    "photo-carousel",
+    "mockumentary",
+    "image-generation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "oh-my-FolkStoryPhoto",
+    "shortDescription": "创作并自审真实手机相册感的民间故事图文",
+    "longDescription": "从灵感来源研究、文字方案和人物母版开始，生成具有可信拍摄来源的手机伪纪录图文，并通过结构化自审、单轮返修和发布验收完成交付。",
+    "developerName": "isliuyx",
+    "category": "Creativity",
+    "capabilities": [
+      "Interactive",
+      "Write",
+      "Image generation"
+    ],
+    "defaultPrompt": [
+      "使用 $oh-my-folkstoryphoto，根据我提供的灵感先做可审查的文字方案。",
+      "使用 $oh-my-folkstoryphoto，把这个传说改编成真实手机相册感的图文。",
+      "使用 $oh-my-folkstoryphoto，检查这个项目并完成自审返修。"
+    ]
+  }
+}

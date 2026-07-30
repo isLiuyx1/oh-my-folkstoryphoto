@@ -1,0 +1,27 @@
+{
+  "old_editorial_portrait": {
+    "hard_failures": [],
+    "photo_red_flags": [
+      "centered_subject",
+      "direct_gaze",
+      "clean_edges",
+      "commercial_sharpness"
+    ],
+    "expected": "fail"
+  },
+  "candid_doorway_snapshot": {
+    "hard_failures": [],
+    "photo_red_flags": [
+      "commercial_sharpness"
+    ],
+    "observations": [
+      "coworker shoots through a doorway",
+      "subject keeps working",
+      "foreground obstruction",
+      "hand motion blur",
+      "clipped window highlights"
+    ],
+    "expected": "pass"
+  }
+}
+

@@ -1,0 +1,19 @@
+{
+  "description": "Continue an active folk-story carousel task once when structured self-review is unfinished.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$PLUGIN_ROOT/hooks/stop_review.py\"",
+            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\stop_review.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking folk-story self-review state"
+          }
+        ]
+      }
+    ]
+  }
+}
+

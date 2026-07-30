@@ -1,0 +1,4 @@
+interface:
+  display_name: "oh-my-FolkStoryPhoto"
+  short_description: "创作并自审真实手机相册感的民间故事图文"
+  default_prompt: "使用 $oh-my-folkstoryphoto，根据我提供的灵感先制作可审查方案，确认后再生成并自审完整图文发布包。"
