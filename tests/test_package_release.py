@@ -20,7 +20,7 @@ SCRIPT = (
     / "package_release.py"
 )
 SCRIPTS_DIR = SCRIPT.parent
-sys.path.insert(0, str(SCRIPTS_DIR))
+sys.path.append(str(SCRIPTS_DIR))
 SPEC = importlib.util.spec_from_file_location("package_release", SCRIPT)
 package_release = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader

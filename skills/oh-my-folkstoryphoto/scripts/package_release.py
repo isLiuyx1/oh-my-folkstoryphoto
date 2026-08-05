@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
         "--state",
         type=Path,
         help=(
-            "For schema v2 projects, require a valid final_self_review or complete "
+            "For schema v2/v3 projects, require a valid final_self_review or complete "
             "state whose release manifest matches --manifest."
         ),
     )
@@ -62,8 +62,8 @@ def parse_args() -> argparse.Namespace:
 def verify_state_for_packaging(state_path: Path, manifest_path: Path) -> None:
     summary = validate_state(state_path)
     payload = load_json(state_path)
-    if payload.get("schema_version") != 2:
-        raise ValueError("--state packaging guard requires schema_version 2")
+    if payload.get("schema_version") not in {2, 3}:
+        raise ValueError("--state packaging guard requires schema_version 2 or 3")
     if summary["phase"] not in {"final_self_review", "complete"}:
         raise ValueError(
             "--state must be in final_self_review or complete before packaging"
