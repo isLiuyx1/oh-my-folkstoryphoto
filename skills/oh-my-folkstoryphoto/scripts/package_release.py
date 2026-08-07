@@ -14,6 +14,7 @@ from typing import Any
 
 from review_state import (
     StateError,
+    artifact_path,
     load_json,
     resolve_project_dir,
     resolve_project_path,
@@ -42,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         "--state",
         type=Path,
         help=(
-            "For schema v2/v3 projects, require a valid final_self_review or complete "
+            "For schema v2/v3/v4 projects, require a valid final_self_review or complete "
             "state whose release manifest matches --manifest."
         ),
     )
@@ -59,11 +60,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def verify_state_for_packaging(state_path: Path, manifest_path: Path) -> None:
+def verify_state_for_packaging(state_path: Path, manifest_path: Path) -> tuple[Path, dict[str, Any]]:
+    manifest_path = manifest_path.expanduser().resolve()
     summary = validate_state(state_path)
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {2, 3}:
-        raise ValueError("--state packaging guard requires schema_version 2 or 3")
+    if payload.get("schema_version") not in {2, 3, 4}:
+        raise ValueError("--state packaging guard requires schema_version 2, 3 or 4")
     if summary["phase"] not in {"final_self_review", "complete"}:
         raise ValueError(
             "--state must be in final_self_review or complete before packaging"
@@ -75,6 +77,7 @@ def verify_state_for_packaging(state_path: Path, manifest_path: Path) -> None:
     )
     if state_manifest != manifest_path:
         raise ValueError("--manifest does not match artifacts.release_manifest")
+    return project_dir, payload
 
 
 def validate_focal(value: Any, field: str, index: int) -> float:
@@ -86,7 +89,7 @@ def validate_focal(value: Any, field: str, index: int) -> float:
     return result
 
 
-def load_manifest(path: Path) -> list[dict[str, Any]]:
+def load_manifest(path: Path, base_dir: Path | None = None) -> list[dict[str, Any]]:
     if not path.is_file():
         raise ValueError(f"Manifest does not exist: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -106,7 +109,7 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"images[{index}].source must be a path string.")
         source = Path(raw_source).expanduser()
         if not source.is_absolute():
-            source = (path.parent / source).resolve()
+            source = ((base_dir or path.parent) / source).resolve()
         if not source.is_file():
             raise ValueError(f"Source image does not exist: {source}")
         normalized.append(
@@ -214,15 +217,23 @@ def main() -> int:
         raise SystemExit("--overview-name must be a filename, not a path.")
     try:
         manifest_path = args.manifest.expanduser().resolve()
+        project_dir: Path | None = None
+        state_payload: dict[str, Any] | None = None
         if args.state is not None:
-            verify_state_for_packaging(
+            project_dir, state_payload = verify_state_for_packaging(
                 args.state.expanduser().resolve(), manifest_path
             )
-        images = load_manifest(manifest_path)
+        images = load_manifest(manifest_path, project_dir)
     except (OSError, json.JSONDecodeError, StateError, ValueError) as exc:
         raise SystemExit(f"Invalid manifest: {exc}") from exc
 
     output_dir = args.output_dir.expanduser().resolve()
+    if state_payload is not None and state_payload.get("schema_version") == 4:
+        expected_output = artifact_path(project_dir, state_payload, "release_dir")
+        if output_dir != expected_output:
+            raise SystemExit(
+                f"Schema v4 output directory must match artifacts.release_dir: {expected_output}"
+            )
     output_dir.mkdir(parents=True, exist_ok=True)
     release_paths = [
         output_dir / f"{item['number']:02d}.png" for item in images

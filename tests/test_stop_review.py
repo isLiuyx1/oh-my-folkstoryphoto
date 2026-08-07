@@ -46,8 +46,11 @@ class StopReviewTests(unittest.TestCase):
 
     def test_waiting_for_user_allows_stop(self):
         for phase in (
+            "awaiting_story_approval",
+            "awaiting_storyboard_approval",
             "awaiting_plan_approval",
             "awaiting_reference_approval",
+            "awaiting_repair_approval",
             "needs_user",
             "complete",
         ):
@@ -55,10 +58,11 @@ class StopReviewTests(unittest.TestCase):
                 self.assertEqual(self.invoke(Path(directory), phase), {})
 
     def test_unfinished_review_continues(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output = self.invoke(Path(directory), "scene_self_review")
-        self.assertEqual(output["decision"], "block")
-        self.assertIn("scene_self_review", output["reason"])
+        for phase in ("story_self_review", "plan_self_review", "scene_self_review"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                output = self.invoke(Path(directory), phase)
+                self.assertEqual(output["decision"], "block")
+                self.assertIn(phase, output["reason"])
 
     def test_second_stop_does_not_loop(self):
         with tempfile.TemporaryDirectory() as directory:

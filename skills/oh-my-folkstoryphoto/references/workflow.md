@@ -4,8 +4,9 @@
 
 - [1. 输入与资料定位](#1-输入与资料定位)
 - [2. 项目初始化](#2-项目初始化)
-- [3. 文字方案](#3-文字方案)
-- [4. 参考图](#4-参考图)
+- [3. 故事与第一次确认](#3-故事与第一次确认)
+- [4. 分镜与第二次确认](#4-分镜与第二次确认)
+- [5. 参考图与第三次确认](#5-参考图与第三次确认)
 - [5. 正式生图](#5-正式生图)
 - [6. 传输失败处理](#6-传输失败处理)
 - [7. 自审、返修报告与统一返修](#7-自审返修报告与统一返修)
@@ -24,14 +25,16 @@
 
 ## 2. 项目初始化
 
-选择未被占用的主题目录，创建 [output-spec.md](output-spec.md) 规定的目录、`生成请求/` 和 schema v3 `review-state.json`。初始化时登记全部计划图号，未生成项使用 `status: "pending"`。未完成的 v2 项目必须先显式 dry-run 并迁移；已完成 v2 只读保留。状态必须按以下顺序推进：
+选择未被占用的主题目录。新项目运行 `review_state.py init-project`，只创建 `01-故事脚本.md` 和 `08-系统文件/review-state.json`；不得提前创建空报告、分镜或图片任务。旧项目按原 schema 继续，不迁移目录。状态必须按以下顺序推进：
 
 `transport_guard.py` 与 `package_release.py` 需要 Pillow。若系统 `python3` 缺少 Pillow，在 Codex Desktop 先加载工作区依赖，再使用返回的捆绑 Python 路径；不要因依赖错误跳过预检。
 
 ```text
 drafting
-→ text_self_review
-→ awaiting_plan_approval
+→ story_self_review
+→ awaiting_story_approval
+→ plan_self_review
+→ awaiting_storyboard_approval
 → reference_self_review
 → awaiting_reference_approval
 → scene_self_review
@@ -41,11 +44,24 @@ drafting
 → complete / needs_user
 ```
 
-不得从 `drafting` 跳过文字确认直接生图。用户要求修改时退回当前门槛对应的审查阶段。
+不得跳过故事、专业分镜或参考图批准直接生图。用户修改已批准的故事或分镜时运行 `reopen-gate`，先备份状态再清除下游批准。
 
-## 3. 文字方案
+## 3. 故事与第一次确认
 
-生图前完成：
+第一阶段只完成 `01-故事脚本.md`。内容包括推荐标题、核心矛盾、主角动机和第一人称完整故事；不生成分镜、字幕表、提示词、发布说明或参考任务。
+
+进入 `story_self_review`，检查故事是否具备现实基线、异常入口、渐进发现、撤离、验证和最终证据。通过后设为 `awaiting_story_approval` 并停止。用户可直接编辑故事文件；收到明确批准后运行：
+
+```bash
+python3 <skill-dir>/scripts/review_state.py approve-story \
+  --state /project/08-系统文件/review-state.json --user-approved
+```
+
+命令重新读取用户当前版本、保存 SHA-256，并进入 `plan_self_review`。
+
+## 4. 分镜与第二次确认
+
+故事批准后完成：
 
 1. 3–5 个标题备选和推荐标题。
 2. 一句话核心矛盾。
@@ -53,15 +69,16 @@ drafting
 4. 现实基线、异常入口、渐进发现、撤离、验证和最终证据。
 5. 24–27 图证据链，每张只承担一个主要信息点。
 6. 每图一句可后期排版的第一人称字幕。
-7. 第一人称完整故事。
-8. 人物、服装、道具、地点、季节和设备连续性。
-9. 每张的可信拍摄事件。
-10. 每张的最终提示词与参考图计划。
-11. 发布简介、AI 声明、节奏和灵感来源说明。
+7. 人物、服装、道具、地点、季节和设备连续性。
+8. 每张的可信拍摄事件。
+9. 每张的最终提示词与参考图计划。
+10. 发布简介、AI 声明、节奏和灵感来源说明。
 
-进入 `text_self_review`，执行 [self-review.md](self-review.md)。通过后设为 `awaiting_plan_approval` 并停止。只有用户明确表达“方案确认”“可以出图”或同等含义才继续。
+根目录 `02-专业分镜表.md` 只用五列：图号、画面拍什么、镜头怎么拍、人物在做什么、这张图要表达什么。字幕、来源、设备、连续性和风险只写入 `07-制作资料/02-AI生成分镜.md`。两表必须同图数、同顺序、同核心画面。
 
-## 4. 参考图
+运行 `register-storyboard --planned-count N` 后才创建正式图片任务。文字自审通过后设为 `awaiting_storyboard_approval` 并停止；收到明确批准后运行 `approve-storyboard --user-approved`，同时固化两张分镜表哈希。
+
+## 5. 参考图与第三次确认
 
 方案确认后先读取 `$imagegen`：
 
@@ -76,15 +93,15 @@ drafting
 
 ```bash
 python3 <skill-dir>/scripts/review_state.py register-reference-job \
-  --state /project/review-state.json --reference-id hero-main \
-  --kind character --output-dir 角色参考
+  --state /project/08-系统文件/review-state.json --reference-id hero-main \
+  --kind character --output-dir 05-参考素材/01-角色参考
 
 python3 <skill-dir>/scripts/transport_guard.py reference-preflight \
-  --state /project/review-state.json --reference-id hero-main \
+  --state /project/08-系统文件/review-state.json --reference-id hero-main \
   --prompt-file /path/to/reference-prompt.txt
 ```
 
-使用 `record-reference-success` 或 `record-reference-failure` 登记传输结果，再用 `review_state.py record-reference-review --verdict pass|fail` 登记实际审查。首次内容失败时状态机保留首版并从原始锚点固化一次 regenerate；第二版仍失败才设为 `needs_user`。`mark-reference-pass` 是通过操作的兼容别名。一个参考任务耗尽恢复阶梯后只阻塞该项；继续其他参考任务，全部处理完再统一报告。所有已登记参考任务通过前不得进入 `awaiting_reference_approval`。
+使用 `record-reference-success` 或 `record-reference-failure` 登记传输结果，再用 `review_state.py record-reference-review --verdict pass|fail` 登记实际审查。首次内容失败时状态机保留首版并从原始锚点固化一次 regenerate；第二版仍失败才设为 `needs_user`。一个参考任务耗尽恢复阶梯后只阻塞该项；继续其他参考任务。所有已登记参考任务通过后进入 `awaiting_reference_approval` 并停止；收到明确批准后运行 `approve-references --user-approved`，保存每个批准候选的路径与哈希。
 
 ## 5. 正式生图
 
@@ -92,7 +109,7 @@ python3 <skill-dir>/scripts/transport_guard.py reference-preflight \
 - 每个正式提示词必须明确包含 `vertical 4:5` 或“竖版 4:5”，且不得包含 `landscape`、`horizontal`、`横版`、`3:2`、`16:9` 等冲突要求。`preflight` 对缺失或冲突画幅直接拒绝，不得依赖发布阶段才裁切。
 - 开始或续跑前运行 `transport_guard.py batch-status`；一次只允许一个任务处于 `generating`。`preflight` 在没有活动批次、旧批次达到 3 张成功或持续 15 分钟时自动创建下一批。
 - 批次边界只用于限流与审计，不是用户确认门槛。传输失败不结束批次；有自动恢复档位时立即固化下一档请求，否则延后当前项并继续下一项。
-- 尚无候选的正式原图若使用两张独立参考，硬超时为 480 秒；0–1 张自然参考、单文件参考板和返修调用仍为 600 秒。使用可等待的工具调用时按不超过 120 秒的区间轮询并保持用户可见更新；达到 `preflight.runtime_budget_seconds` 仍无候选时终止并检查迟到候选。v3 根据已固化的开始时间计算实际耗时，`--elapsed-seconds` 只作为报告值，不能提前触发 timeout。
+- 尚无候选的正式原图若使用两张独立参考，硬超时为 480 秒；0–1 张自然参考、单文件参考板和返修调用仍为 600 秒。使用可等待的工具调用时按不超过 120 秒的区间轮询并保持用户可见更新；达到 `preflight.runtime_budget_seconds` 仍无候选时终止并检查迟到候选。v3/v4 根据已固化的开始时间计算实际耗时，`--elapsed-seconds` 只作为报告值，不能提前触发 timeout。
 - 调用前按下列三种范式构造参数，省略所有无值字段：
 
   **全新生图**
@@ -120,13 +137,13 @@ python3 <skill-dir>/scripts/transport_guard.py reference-preflight \
 - 新项目最多使用两张独立参考；三张以上先在分镜规划阶段缩减到必要的两张。自动恢复不删参考来源，只把两个逻辑来源合成一个物理附件。
 - `preflight` 返回物理附件数、逻辑来源数、参考种类与 `reference_summary.latency_risk`。两张独立参考或一个双来源参考板标记为 `elevated`；3 张及以上或总输入达到约 8 MiB 标记为 `high`。新建精确局部编辑请求时，只输入编辑目标和确实参与被改区域重建的参考图；身份、车辆或地点若已在编辑目标中清晰可见且只需保持不变，应写入提示词不变量，而不是重复上传。请求快照一旦固化，重试不得据此静默删图。
 - 新请求在硬限制之外再使用软预算：参考图优先最长边不超过约 1024 px，总输入尽量不超过约 1.5 MiB，并排除本镜不需要的人物和复杂背景。软预算用于降低视觉编码长尾，不是质量降级命令；身份敏感镜头不得直接改成零参考。
-- 正式提示词也使用场景软预算：只展开本镜实际出场人物的身份锚点、当前地点/道具、拍摄事件、成像结果和硬约束；不要重复全篇所有角色、未出现地点、玉佩或终局设定。`preflight` 输出 `prompt_summary`；约 2200 bytes 起标记 `elevated`、约 3200 bytes 起标记 `high`。该指标是复杂度诊断而非服务时延保证。首次固化前应删去无关段落；v3 传输恢复不得修改提示词，`revise-request` 仅供 v2 兼容。
+- 正式提示词也使用场景软预算：只展开本镜实际出场人物的身份锚点、当前地点/道具、拍摄事件、成像结果和硬约束；不要重复全篇所有角色、未出现地点、玉佩或终局设定。`preflight` 输出 `prompt_summary`；约 2200 bytes 起标记 `elevated`、约 3200 bytes 起标记 `high`。该指标是复杂度诊断而非服务时延保证。首次固化前应删去无关段落；v3/v4 传输恢复不得修改提示词，`revise-request` 仅供 v2 兼容。
 - 自动恢复单参考时由状态机调用 `scripts/optimize_reference.py`，只做全图缩放和压缩，不传 `--crop`：
 
   ```bash
   python3 <skill-dir>/scripts/optimize_reference.py \
-    --input /project/角色参考/approved.png \
-    --output /project/角色参考/派生/scene-NN.jpg \
+    --input /project/05-参考素材/01-角色参考/approved.png \
+    --output /project/08-系统文件/01-生成请求/派生参考/scene-NN.jpg \
     --max-edge 1024 --jpeg-quality 88
   ```
 
@@ -151,19 +168,19 @@ Reference-board safety: references are continuity anchors only; never copy panel
 
   ```bash
   python3 <skill-dir>/scripts/transport_guard.py preflight \
-    --state /path/to/review-state.json \
+    --state /project/08-系统文件/review-state.json \
     --number NN \
     --prompt-file /path/to/prompt.txt \
     --reference /absolute/reference-1.png \
     --reference-role "本图实际人物姓名与锚定内容"
   ```
 
-  无参考图时省略 `--reference`。该命令校验 PNG/JPEG 文件头、可解码性、尺寸、色彩模式与 SHA-256，并在 `生成请求/NN.json` 固化正式请求。内置重试若提示词或参考图发生变化，预检必须拒绝。
+  无参考图时省略 `--reference`。该命令校验 PNG/JPEG 文件头、可解码性、尺寸、色彩模式与 SHA-256，并在 `08-系统文件/01-生成请求/NN.json` 固化 v4 请求。内置重试若提示词或参考图发生变化，预检必须拒绝。
 - 重试或恢复探测不得用会自动添加换行的文本提取命令重建提示词。必须从既有请求快照逐字节物化：
 
   ```bash
   python3 <skill-dir>/scripts/transport_guard.py materialize-prompt \
-    --state /path/to/review-state.json \
+    --state /project/08-系统文件/review-state.json \
     --number NN \
     --output /new/nonexistent/path/NN-prompt.txt
   ```
@@ -173,8 +190,8 @@ Reference-board safety: references are continuity anchors only; never copy panel
 - 有正脸时优先锁定已确认参考；多人优先侧脸、背影和中远景。
 - 第一视角不得出现拍摄者本人，可出现结构正常的手、袖口、背包或工具。
 - 不让模型生成承担语义的地图、文档、界面和精确日期。
-- 模型返回后先检查方向和画面安全区。精确 4:5 可直接复制；常见的竖版 2:3 原始输出可运行 `scripts/normalize_candidate.py --input RAW --output 原始生成图/NN.png` 做居中或 `--focal-y` 指定焦点的非破坏性裁切。横版输出必须重生成，禁止裁成竖版。`record-success` 会拒绝任何非精确 4:5 候选。
-- 将精确 4:5 结果复制到 `原始生成图/NN.png`；不得只保留生成缓存路径。
+- 模型返回后先检查方向和画面安全区。精确 4:5 可直接复制；常见的竖版 2:3 原始输出可运行 `scripts/normalize_candidate.py --input RAW --output 06-生成过程/01-原始生成图/NN.png` 做居中或 `--focal-y` 指定焦点的非破坏性裁切。横版输出必须重生成，禁止裁成竖版。`record-success` 会拒绝任何非精确 4:5 候选。
+- 将精确 4:5 结果复制到 `06-生成过程/01-原始生成图/NN.png`；不得只保留生成缓存路径。
 
 ## 6. 传输失败处理
 
@@ -191,7 +208,7 @@ Reference-board safety: references are continuity anchors only; never copy panel
 
    ```bash
    python3 <skill-dir>/scripts/transport_guard.py record-failure \
-     --state /path/to/review-state.json \
+     --state /project/08-系统文件/review-state.json \
      --number NN \
      --error-type network_error \
      --message "原始错误摘要"
@@ -201,7 +218,7 @@ Reference-board safety: references are continuity anchors only; never copy panel
 3. `timeout` 或 `no_candidate` 且存在 1–2 张参考时，`record-failure` 先结束在途尝试并释放全局锁，再以幂等事务生成下一档派生输入、归档旧请求并返回 `retry_ready: true`；立即用返回的 `next_references` 和 `next_reference_roles` 重新预检，不冷却、不请求批准。派生失败只把当前项设为 `transport_blocked`。
 4. `network_error` 不改变输入；当前项进入约 2 分钟、10 分钟的延后队列，同时继续其他可运行项。零参考请求也按此方式延后。
 5. 第三次失败且没有下一档自动恢复时设为 `transport_blocked`。两个不同任务的相同错误只写入 `backend_health_warning`，不阻止后续请求。
-6. 返回候选图后先复制进项目，再运行 `record-success --candidate /project/原始生成图/NN.png`。该图进入 `review_pending`。
+6. 返回候选图后先复制进项目，再运行 `record-success --candidate /project/06-生成过程/01-原始生成图/NN.png`。该图进入 `review_pending`。
 
 传输失败不得增加 `repair_count`、创建伪造返修文件、改变既有候选图的内容判定，或写入项目级 `blocking_reasons`。自动派生必须记录原始/派生哈希、参数、请求版本和触发错误。
 
@@ -215,7 +232,7 @@ Reference-board safety: references are continuity anchors only; never copy panel
 
 ```bash
 python3 <skill-dir>/scripts/transport_guard.py recover-interrupted \
-  --state /path/to/review-state.json \
+  --state /project/08-系统文件/review-state.json \
   --number NN \
   --reason turn_interrupted \
   --confirm-no-candidate
@@ -229,7 +246,7 @@ python3 <skill-dir>/scripts/transport_guard.py recover-interrupted \
 
 ```bash
 python3 <skill-dir>/scripts/transport_guard.py batch-status \
-  --state /path/to/review-state.json
+  --state /project/08-系统文件/review-state.json
 
 ```
 
@@ -239,7 +256,7 @@ python3 <skill-dir>/scripts/transport_guard.py batch-status \
 
 ```bash
 python3 <skill-dir>/scripts/transport_guard.py prepare-blocked-report \
-  --state /path/to/review-state.json --output /project/生成阻塞报告.md
+  --state /project/08-系统文件/review-state.json
 ```
 
 报告生成前不得因单图阻塞中止整个队列。
@@ -250,31 +267,31 @@ python3 <skill-dir>/scripts/transport_guard.py prepare-blocked-report \
 
 ```bash
 python3 <skill-dir>/scripts/transport_guard.py authorize-fallback \
-  --state /path/to/review-state.json \
+  --state /project/08-系统文件/review-state.json \
   --backend cli_api \
   --model MODEL_ID \
   --user-approved
 ```
 
-备用调用前仍运行 `preflight --backend cli_api --model MODEL_ID`。必须已有 `生成请求/NN.json` 作为内置请求基线；脚本将备用请求保存为独立快照，并明确记录提示词与参考图是否变化。不得以删参考图或弱化提示词作为规避传输错误的手段。
+备用调用前仍运行 `preflight --backend cli_api --model MODEL_ID`。v4 必须已有 `08-系统文件/01-生成请求/NN.json` 作为内置请求基线；脚本将备用请求保存为独立快照，并明确记录提示词与参考图是否变化。不得以删参考图或弱化提示词作为规避传输错误的手段。
 
 没有 API Key、但 Codex CLI 已用 ChatGPT 订阅登录时，可在用户明确授权后使用订阅 bridge：
 
 ```bash
 python3 <skill-dir>/scripts/transport_guard.py authorize-fallback \
-  --state /path/to/review-state.json \
+  --state /project/08-系统文件/review-state.json \
   --backend codex_subscription_bridge --model gpt-image-2 --user-approved
 
 python3 <skill-dir>/scripts/transport_guard.py preflight \
-  --state /path/to/review-state.json --number NN \
+  --state /project/08-系统文件/review-state.json --number NN \
   --backend codex_subscription_bridge --model gpt-image-2 \
   --prompt-file /path/to/prompt.txt --reference /path/to/reference.png
 
 python3 <skill-dir>/scripts/subscription_image_bridge.py \
   --prompt-file /path/to/prompt.txt \
   --reference /path/to/reference.png \
-  --output /project/原始生成图/NN.png \
-  --log /project/生成请求/NN-subscription-bridge.log \
+  --output /project/06-生成过程/01-原始生成图/NN.png \
+  --log /project/08-系统文件/01-生成请求/NN-subscription-bridge.log \
   --size 1024x1280 --timeout-seconds 480
 ```
 
@@ -288,11 +305,11 @@ python3 <skill-dir>/scripts/subscription_image_bridge.py \
 - 身份、空间和机位正确的局部瑕疵：编辑返修。
 - 严重肢体、车辆或建筑结构错误：改变机位或重生成，不用涂抹遮掩。
 
-原候选移入或复制到 `返修记录/NN-v1-问题.png`，修正版用 `NN-v2-修正版.png`。每个失败项只能自动修复一次。复审仍失败时设为 `needs_user` 并停止，不得静默选用旧图。
+原候选移入或复制到 `06-生成过程/02-返修记录/NN-v1-问题.png`，修正版用 `NN-v2-修正版.png`。每个失败项只能自动修复一次。复审仍失败时设为 `needs_user` 并停止，不得静默选用旧图。
 
 只有已经返回并可实际查看的候选图，其内容失败才算一次返修。网络错误、超时和无候选文件不属于返修。
 
-返修生图仍必须经过传输预检，增加 `--repair-mode edit` 或 `--repair-mode regenerate`。脚本允许 `review_pending` 原候选进入一次返修，为其保存独立的 `生成请求/NN-repair.json`；传输失败会恢复为 `review_pending`，不会丢失原候选。`edit` 的自动恢复始终保持编辑目标为第一张独立附件，并把目标与支持图分别按 1024/88、768/80 两档全图压缩，永不拼板或转成 regenerate。返修候选成功返回后，`record-success` 保留原始 `candidate`，并登记 `repair_count: 1`、`repair_mode` 和 `repair_file`。
+返修生图仍必须经过传输预检，增加 `--repair-mode edit` 或 `--repair-mode regenerate`。脚本允许 `review_pending` 原候选进入一次返修，为其保存独立的 `08-系统文件/01-生成请求/NN-repair.json`；传输失败会恢复为 `review_pending`，不会丢失原候选。`edit` 的自动恢复始终保持编辑目标为第一张独立附件，并把目标与支持图分别按 1024/88、768/80 两档全图压缩，永不拼板或转成 regenerate。返修候选成功返回后，`record-success` 保留原始 `candidate`，并登记 `repair_count: 1`、`repair_mode` 和 `repair_file`。
 
 原图返回后立即审查：通过项运行 `mark-pass`；失败项运行 `queue-repair` 记录问题、建议方式和摄影红旗，但继续生成后续原图，不得立即返修。
 
@@ -300,21 +317,21 @@ python3 <skill-dir>/scripts/subscription_image_bridge.py \
 
 ```bash
 python3 <skill-dir>/scripts/review_state.py prepare-repair-report \
-  --state /path/to/review-state.json --output 返修报告.md
+  --state /project/08-系统文件/review-state.json
 ```
 
 存在待返修项时状态进入 `awaiting_repair_approval` 并停止。用户阅读报告并明确批准后运行：
 
 ```bash
 python3 <skill-dir>/scripts/review_state.py authorize-repairs \
-  --state /path/to/review-state.json --number NN --user-approved
+  --state /project/08-系统文件/review-state.json --number NN --user-approved
 ```
 
 省略 `--number` 表示批准报告中的全部项目。只有获批图号可进入 `preflight --repair-mode`。获批返修发生 `timeout`/`no_candidate` 后自动使用同一参考降级阶梯，无需再次批准输入优化。旧项目仍可使用：
 
 ```bash
 python3 <skill-dir>/scripts/transport_guard.py supersede-repair \
-  --state /path/to/review-state.json \
+  --state /project/08-系统文件/review-state.json \
   --number NN \
   --reason "具体诊断与拟调整内容" \
   --user-approved
@@ -326,7 +343,7 @@ python3 <skill-dir>/scripts/transport_guard.py supersede-repair \
 
 ```bash
 python3 <skill-dir>/scripts/review_state.py mark-pass \
-  --state /path/to/review-state.json \
+  --state /project/08-系统文件/review-state.json \
   --number NN \
   --notes "复审结论" \
   --red-flag "少于三项的摄影红旗"
@@ -341,7 +358,7 @@ python3 <skill-dir>/scripts/review_state.py mark-pass \
 1. 检查普通相册测试、证据链比例、设备和角色连续性。
 2. 制作期 manifest 可以只引用已通过图片；最终验收 manifest 必须包含全部计划图号。
 3. 用 `review_state.py` 校验状态。
-4. 用 `package_release.py --state /path/to/review-state.json` 生成 1080×1350 PNG 与联系表；状态不在 `final_self_review`/`complete`、存在缺图或 manifest 不完整时脚本必须拒绝。
+4. 用 `package_release.py --state /project/08-系统文件/review-state.json` 生成 1080×1350 PNG 与联系表；v4 输出必须等于状态中的 `04-最终发布版-N图`，存在缺图或 manifest 不完整时脚本必须拒绝。
 5. 完成 `验收记录.md` 和 `自审记录.md`。
 6. 将状态设为 `complete` 后再次校验。
 

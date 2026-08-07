@@ -8,6 +8,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -18,6 +19,10 @@ from typing import Any
 
 PHASES = {
     "drafting",
+    "story_self_review",
+    "awaiting_story_approval",
+    "plan_self_review",
+    "awaiting_storyboard_approval",
     "text_self_review",
     "awaiting_plan_approval",
     "reference_self_review",
@@ -38,12 +43,16 @@ V2_STATUSES = {
     "pass",
     "needs_user",
 }
-SUPPORTED_SCHEMAS = {1, 2, 3}
+SUPPORTED_SCHEMAS = {1, 2, 3, 4}
 FINAL_PHASES = {"final_self_review", "complete"}
 REQUIRED_COMPLETE_ARTIFACTS = ("self_review", "acceptance", "release_manifest")
 REFERENCE_BOARD_TIMEOUT_SECONDS = 480
 LEGAL_TRANSITIONS = {
-    "drafting": {"text_self_review", "needs_user"},
+    "drafting": {"story_self_review", "text_self_review", "needs_user"},
+    "story_self_review": {"awaiting_story_approval", "needs_user"},
+    "awaiting_story_approval": {"story_self_review", "plan_self_review", "needs_user"},
+    "plan_self_review": {"awaiting_storyboard_approval", "story_self_review", "needs_user"},
+    "awaiting_storyboard_approval": {"plan_self_review", "reference_self_review", "story_self_review", "needs_user"},
     "text_self_review": {"awaiting_plan_approval", "needs_user"},
     "awaiting_plan_approval": {"drafting", "reference_self_review", "needs_user"},
     "reference_self_review": {"awaiting_reference_approval", "needs_user"},
@@ -72,10 +81,50 @@ LEGAL_TRANSITIONS = {
     },
 }
 APPROVAL_TRANSITIONS = {
+    ("awaiting_story_approval", "plan_self_review"),
+    ("awaiting_storyboard_approval", "reference_self_review"),
     ("awaiting_plan_approval", "reference_self_review"),
     ("awaiting_reference_approval", "scene_self_review"),
     ("awaiting_repair_approval", "repairing"),
 }
+
+V4_ARTIFACTS = {
+    "story": "01-故事脚本.md",
+    "storyboard": "02-专业分镜表.md",
+    "publication": "03-发布文件说明.md",
+    "release_dir": "04-最终发布版-N图",
+    "references_dir": "05-参考素材",
+    "character_references": "05-参考素材/01-角色参考",
+    "location_masters": "05-参考素材/02-地点母版",
+    "prop_references": "05-参考素材/03-物件与设备参考",
+    "process_dir": "06-生成过程",
+    "originals_dir": "06-生成过程/01-原始生成图",
+    "repairs_dir": "06-生成过程/02-返修记录",
+    "overview_dir": "06-生成过程/03-当前总览",
+    "production_dir": "07-制作资料",
+    "creative_plan": "07-制作资料/01-创作方案.md",
+    "ai_storyboard": "07-制作资料/02-AI生成分镜.md",
+    "visual_settings": "07-制作资料/03-角色与视觉设定.md",
+    "prompts": "07-制作资料/04-出图提示词.md",
+    "reference_notes": "07-制作资料/05-参考图说明.md",
+    "reports_dir": "07-制作资料/06-审查报告",
+    "self_review": "07-制作资料/06-审查报告/01-自审记录.md",
+    "repair_report": "07-制作资料/06-审查报告/02-返修报告.md",
+    "blocked_report": "07-制作资料/06-审查报告/03-生成阻塞报告.md",
+    "acceptance": "07-制作资料/06-审查报告/04-验收记录.md",
+    "system_dir": "08-系统文件",
+    "release_manifest": "08-系统文件/release-manifest.json",
+    "requests_dir": "08-系统文件/01-生成请求",
+    "backups_dir": "08-系统文件/02-状态备份",
+}
+
+PUBLIC_STORYBOARD_COLUMNS = (
+    "图号",
+    "画面拍什么",
+    "镜头怎么拍",
+    "人物在做什么",
+    "这张图要表达什么",
+)
 
 
 class StateError(ValueError):
@@ -163,6 +212,101 @@ def atomic_write_text(path: Path, text: str) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def artifact_relative(payload: dict[str, Any], key: str, legacy: str | None = None) -> str:
+    value = payload.get("artifacts", {}).get(key)
+    if isinstance(value, str) and value.strip():
+        return value
+    if payload.get("schema_version") == 4 and key in V4_ARTIFACTS:
+        return V4_ARTIFACTS[key]
+    if legacy is not None:
+        return legacy
+    raise StateError(f"artifacts.{key} is required")
+
+
+def artifact_path(
+    project_dir: Path,
+    payload: dict[str, Any],
+    key: str,
+    legacy: str | None = None,
+) -> Path:
+    return resolve_project_path(
+        project_dir, artifact_relative(payload, key, legacy), f"artifacts.{key}"
+    )
+
+
+def requests_root(project_dir: Path) -> Path:
+    v4_state = project_dir / V4_ARTIFACTS["system_dir"] / "review-state.json"
+    if v4_state.is_file():
+        payload = load_json(v4_state)
+        if payload.get("schema_version") == 4:
+            return artifact_path(project_dir, payload, "requests_dir")
+    return project_dir / "生成请求"
+
+
+def approval_record(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise StateError(f"approval file does not exist: {path}")
+    if not path.read_text(encoding="utf-8").strip():
+        raise StateError(f"approval file is empty: {path}")
+    return {
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def validate_approval_hash(project_dir: Path, record: Any, field: str) -> None:
+    if not isinstance(record, dict):
+        raise StateError(f"approvals.{field} must be an object")
+    path = resolve_project_path(project_dir, record.get("path"), f"approvals.{field}.path")
+    digest = record.get("sha256")
+    if not isinstance(digest, str) or len(digest) != 64:
+        raise StateError(f"approvals.{field}.sha256 is invalid")
+    if not path.is_file() or sha256_file(path) != digest:
+        raise StateError(
+            f"approved {field} file changed; reopen the corresponding review gate"
+        )
+
+
+def parse_storyboard(path: Path) -> list[int]:
+    if not path.is_file():
+        raise StateError(f"professional storyboard does not exist: {path}")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    table_rows = [line for line in lines if line.strip().startswith("|")]
+    if len(table_rows) < 3:
+        raise StateError("professional storyboard must contain a Markdown table")
+    header = tuple(cell.strip() for cell in table_rows[0].strip().strip("|").split("|"))
+    if header != PUBLIC_STORYBOARD_COLUMNS:
+        raise StateError(
+            "professional storyboard columns must be exactly: "
+            + " | ".join(PUBLIC_STORYBOARD_COLUMNS)
+        )
+    numbers: list[int] = []
+    for row in table_rows[2:]:
+        cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+        if len(cells) != len(PUBLIC_STORYBOARD_COLUMNS):
+            raise StateError("every professional storyboard row must contain exactly five cells")
+        try:
+            number = int(cells[0])
+        except ValueError as exc:
+            raise StateError(f"invalid storyboard image number: {cells[0]}") from exc
+        if any(not value for value in cells[1:]):
+            raise StateError(f"storyboard image {number} contains an empty user-facing field")
+        numbers.append(number)
+    expected = list(range(1, len(numbers) + 1))
+    if numbers != expected:
+        raise StateError(f"storyboard image numbers must be contiguous from 1; got {numbers}")
+    return numbers
 
 
 def load_release_manifest(path: Path) -> list[dict[str, Any]]:
@@ -702,6 +846,102 @@ def validate_v3(state_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def validate_v4(state_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    phase, project_dir, artifacts, images, blocking_reasons = validate_common(
+        state_path, payload
+    )
+    expected_state = project_dir / V4_ARTIFACTS["system_dir"] / "review-state.json"
+    if state_path.resolve() != expected_state.resolve():
+        raise StateError(f"schema v4 state must be stored at {expected_state}")
+    for key, default in V4_ARTIFACTS.items():
+        value = artifacts.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise StateError(f"schema v4 requires artifacts.{key}")
+        if key != "release_dir" and value != default:
+            raise StateError(f"schema v4 artifacts.{key} must equal {default}")
+
+    allowed_root_documents = {
+        V4_ARTIFACTS["story"], V4_ARTIFACTS["storyboard"], V4_ARTIFACTS["publication"]
+    }
+    loose_documents = [
+        path.name for path in project_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in {".md", ".json"}
+        and path.name not in allowed_root_documents
+    ]
+    if loose_documents:
+        raise StateError(
+            "schema v4 root contains unclassified Markdown/JSON files: "
+            + ", ".join(sorted(loose_documents))
+        )
+
+    planned_count = payload.get("planned_count")
+    if planned_count is None:
+        if images:
+            raise StateError("schema v4 story stage must not create image tasks before the storyboard")
+        if payload.get("reference_jobs", []):
+            raise StateError("schema v4 story stage must not create reference jobs before the storyboard")
+        normalized: list[dict[str, Any]] = []
+    else:
+        if not isinstance(planned_count, int) or isinstance(planned_count, bool) or planned_count < 1:
+            raise StateError("planned_count must be null before planning or a positive integer")
+        compatibility = copy.deepcopy(payload)
+        compatibility["schema_version"] = 3
+        result = validate_v3(state_path, compatibility)
+        normalized = [
+            {
+                "number": item["number"],
+                "status": item["status"],
+                "final_source": resolve_project_path(project_dir, item["final_source"], "final_source")
+                if item.get("final_source") else None,
+            }
+            for item in payload["images"]
+        ]
+        result["schema_version"] = 4
+    expected_release_dir = (
+        V4_ARTIFACTS["release_dir"]
+        if planned_count is None
+        else f"04-最终发布版-{planned_count}图"
+    )
+    if artifacts.get("release_dir") != expected_release_dir:
+        raise StateError(f"schema v4 artifacts.release_dir must equal {expected_release_dir}")
+
+    approvals = payload.get("approvals")
+    if not isinstance(approvals, dict):
+        raise StateError("schema v4 approvals must be an object")
+    story_required = phase not in {"drafting", "story_self_review", "awaiting_story_approval", "needs_user"}
+    storyboard_required = phase in {
+        "reference_self_review", "awaiting_reference_approval", "scene_self_review",
+        "awaiting_repair_approval", "repairing", "final_self_review", "complete",
+    }
+    references_required = phase in {
+        "scene_self_review", "awaiting_repair_approval", "repairing",
+        "final_self_review", "complete",
+    }
+    if story_required:
+        validate_approval_hash(project_dir, approvals.get("story"), "story")
+    if storyboard_required:
+        storyboard = approvals.get("storyboard")
+        if not isinstance(storyboard, dict):
+            raise StateError("approvals.storyboard must be an object")
+        validate_approval_hash(project_dir, storyboard.get("public"), "storyboard.public")
+        validate_approval_hash(project_dir, storyboard.get("production"), "storyboard.production")
+        numbers = parse_storyboard(artifact_path(project_dir, payload, "storyboard"))
+        if planned_count != len(numbers):
+            raise StateError("approved professional storyboard count must equal planned_count")
+    if references_required:
+        references = approvals.get("references")
+        if not isinstance(references, dict) or not isinstance(references.get("assets"), list):
+            raise StateError("formal generation requires approvals.references.assets")
+        for index, record in enumerate(references["assets"]):
+            validate_approval_hash(project_dir, record, f"references.assets[{index}]")
+
+    validate_final_requirements(
+        phase, normalized, artifacts, project_dir, blocking_reasons
+    )
+    validate_manifest(project_dir, artifacts, normalized, phase)
+    return summary(state_path, project_dir, phase, normalized, blocking_reasons, 4)
+
+
 def validate_numbering(normalized: list[dict[str, Any]], planned_count: int) -> None:
     numbers = sorted(item["number"] for item in normalized)
     expected = list(range(1, planned_count + 1))
@@ -771,7 +1011,9 @@ def validate_state(state_path: Path) -> dict[str, Any]:
         return validate_v2(state_path, payload)
     if version == 3:
         return validate_v3(state_path, payload)
-    raise StateError("schema_version must equal 1, 2 or 3")
+    if version == 4:
+        return validate_v4(state_path, payload)
+    raise StateError("schema_version must equal 1, 2, 3 or 4")
 
 
 def empty_transport() -> dict[str, Any]:
@@ -805,10 +1047,228 @@ def empty_transport() -> dict[str, Any]:
     }
 
 
+def empty_image(number: int) -> dict[str, Any]:
+    return {
+        "number": number,
+        "status": "pending",
+        "candidate": None,
+        "hard_failures": [],
+        "photo_red_flags": [],
+        "repair_count": 0,
+        "repair_mode": None,
+        "repair_file": None,
+        "final_source": None,
+        "notes": "",
+        "transport": empty_transport(),
+    }
+
+
+def init_project(project_dir: Path) -> dict[str, Any]:
+    project_dir = project_dir.expanduser().resolve()
+    if project_dir.exists() and any(project_dir.iterdir()):
+        raise StateError(f"project directory is not empty: {project_dir}")
+    project_dir.mkdir(parents=True, exist_ok=True)
+    story = project_dir / V4_ARTIFACTS["story"]
+    system_dir = project_dir / V4_ARTIFACTS["system_dir"]
+    system_dir.mkdir(parents=True, exist_ok=True)
+    if not story.exists():
+        atomic_write_text(story, "# 故事脚本\n")
+    state_path = system_dir / "review-state.json"
+    payload = {
+        "schema_version": 4,
+        "project_dir": "..",
+        "phase": "drafting",
+        "planned_count": None,
+        "max_repairs_per_item": 1,
+        "artifacts": copy.deepcopy(V4_ARTIFACTS),
+        "approvals": {},
+        "images": [],
+        "reference_jobs": [],
+        "transport_backends": {},
+        "transport_batch": None,
+        "fallback_authorizations": {},
+        "reference_board_policy": None,
+        "reference_board_fallbacks": [],
+        "blocking_reasons": [],
+    }
+    atomic_write_json(state_path, payload)
+    result = validate_state(state_path)
+    return {"command": "init-project", **result, "story_file": str(story)}
+
+
+def approve_story(state_path: Path, user_approved: bool) -> dict[str, Any]:
+    if not user_approved:
+        raise StateError("approve-story requires explicit --user-approved")
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 4:
+        raise StateError("approve-story is only available for schema v4")
+    if payload.get("phase") != "awaiting_story_approval":
+        raise StateError("story may only be approved in awaiting_story_approval")
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    story = artifact_path(project_dir, payload, "story")
+    record = approval_record(story)
+    record["path"] = str(story.relative_to(project_dir))
+    payload.setdefault("approvals", {})["story"] = record
+    payload["phase"] = "plan_self_review"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {"command": "approve-story", "phase": payload["phase"], "approval": record}
+
+
+def register_storyboard(state_path: Path, planned_count: int) -> dict[str, Any]:
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 4:
+        raise StateError("register-storyboard is only available for schema v4")
+    if payload.get("phase") != "plan_self_review":
+        raise StateError("storyboard may only be registered in plan_self_review")
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    validate_approval_hash(project_dir, payload.get("approvals", {}).get("story"), "story")
+    storyboard = artifact_path(project_dir, payload, "storyboard")
+    numbers = parse_storyboard(storyboard)
+    if planned_count != len(numbers):
+        raise StateError(
+            f"planned_count {planned_count} does not match professional storyboard rows {len(numbers)}"
+        )
+    production = artifact_path(project_dir, payload, "ai_storyboard")
+    if not production.is_file() or not production.read_text(encoding="utf-8").strip():
+        raise StateError("AI production storyboard must exist before registration")
+    production_numbers = [
+        int(match.group(1))
+        for line in production.read_text(encoding="utf-8").splitlines()
+        if (match := re.match(r"^\|\s*0*(\d+)\s*\|", line))
+    ]
+    unique = list(dict.fromkeys(production_numbers))
+    if unique[:planned_count] != numbers:
+        raise StateError("AI production storyboard must contain the same ordered image numbers")
+    payload["planned_count"] = planned_count
+    payload["images"] = [empty_image(number) for number in numbers]
+    payload["artifacts"]["release_dir"] = f"04-最终发布版-{planned_count}图"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {
+        "command": "register-storyboard",
+        "planned_count": planned_count,
+        "phase": payload["phase"],
+    }
+
+
+def approve_storyboard(state_path: Path, user_approved: bool) -> dict[str, Any]:
+    if not user_approved:
+        raise StateError("approve-storyboard requires explicit --user-approved")
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 4:
+        raise StateError("approve-storyboard is only available for schema v4")
+    if payload.get("phase") != "awaiting_storyboard_approval":
+        raise StateError("storyboard may only be approved in awaiting_storyboard_approval")
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    records: dict[str, Any] = {}
+    for label, key in (("public", "storyboard"), ("production", "ai_storyboard")):
+        path = artifact_path(project_dir, payload, key)
+        record = approval_record(path)
+        record["path"] = str(path.relative_to(project_dir))
+        records[label] = record
+    numbers = parse_storyboard(artifact_path(project_dir, payload, "storyboard"))
+    if payload.get("planned_count") != len(numbers):
+        raise StateError("professional storyboard changed after registration; register it again")
+    payload.setdefault("approvals", {})["storyboard"] = records
+    payload["phase"] = "reference_self_review"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {"command": "approve-storyboard", "phase": payload["phase"], "approval": records}
+
+
+def approve_references(state_path: Path, user_approved: bool) -> dict[str, Any]:
+    if not user_approved:
+        raise StateError("approve-references requires explicit --user-approved")
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 4:
+        raise StateError("approve-references is only available for schema v4")
+    if payload.get("phase") != "awaiting_reference_approval":
+        raise StateError("references may only be approved in awaiting_reference_approval")
+    unfinished = [
+        job.get("id") for job in payload.get("reference_jobs", [])
+        if job.get("status") != "pass"
+    ]
+    if unfinished:
+        raise StateError(
+            "all registered reference jobs must pass before reference approval: "
+            + ", ".join(str(value) for value in unfinished)
+        )
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    assets = []
+    for job in payload.get("reference_jobs", []):
+        candidate = resolve_project_path(
+            project_dir, job.get("approved_candidate"),
+            f"reference_jobs.{job.get('id')}.approved_candidate",
+        )
+        record = approval_record(candidate)
+        record["path"] = str(candidate.relative_to(project_dir))
+        record["reference_id"] = job.get("id")
+        assets.append(record)
+    payload.setdefault("approvals", {})["references"] = {
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+        "assets": assets,
+    }
+    payload["phase"] = "scene_self_review"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {
+        "command": "approve-references",
+        "phase": payload["phase"],
+        "approved_reference_ids": [item["reference_id"] for item in assets],
+    }
+
+
+def reopen_gate(state_path: Path, gate: str) -> dict[str, Any]:
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 4:
+        raise StateError("reopen-gate is only available for schema v4")
+    if gate not in {"story", "storyboard"}:
+        raise StateError("gate must be story or storyboard")
+    active = [
+        str(item.get("number"))
+        for item in payload.get("images", [])
+        if item.get("transport", {}).get("active_attempt") is not None
+    ] + [
+        str(job.get("id"))
+        for job in payload.get("reference_jobs", [])
+        if job.get("transport", {}).get("active_attempt") is not None
+    ]
+    if active:
+        raise StateError("cannot reopen an approval gate while generation is active: " + ", ".join(active))
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    backup_dir = artifact_path(project_dir, payload, "backups_dir")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = backup_dir / f"review-state-before-reopen-{gate}-{stamp}.json"
+    atomic_write_json(backup, payload)
+    approvals = payload.setdefault("approvals", {})
+    approvals.pop("storyboard", None)
+    approvals.pop("references", None)
+    if gate == "story":
+        approvals.pop("story", None)
+        payload["phase"] = "story_self_review"
+    else:
+        payload["phase"] = "plan_self_review"
+    payload["planned_count"] = None
+    payload["images"] = []
+    payload["reference_jobs"] = []
+    payload["transport_batch"] = None
+    payload["transport_backends"] = {}
+    payload["artifacts"]["release_dir"] = V4_ARTIFACTS["release_dir"]
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {
+        "command": "reopen-gate",
+        "gate": gate,
+        "phase": payload["phase"],
+        "backup": str(backup),
+    }
+
+
 def require_writable_state(payload: dict[str, Any], command: str) -> int:
     version = payload.get("schema_version")
-    if version not in {2, 3}:
-        raise StateError(f"{command} requires schema_version 2 or 3")
+    if version not in {2, 3, 4}:
+        raise StateError(f"{command} requires schema_version 2, 3 or 4")
     if version == 2 and payload.get("phase") == "complete":
         raise StateError("completed schema v2 projects are read-only")
     return int(version)
@@ -842,7 +1302,7 @@ def register_reference_job(
         "notes": "",
         "transport": empty_transport(),
     }
-    if version == 3:
+    if version in {3, 4}:
         job.update(
             {
                 "candidate_versions": [],
@@ -862,7 +1322,7 @@ def mark_reference_pass(
 ) -> dict[str, Any]:
     payload = load_json(state_path)
     version = require_writable_state(payload, "mark-reference-pass")
-    if version == 3:
+    if version in {3, 4}:
         result = record_reference_review(
             state_path, reference_id, "pass", [], notes
         )
@@ -900,8 +1360,8 @@ def record_reference_review(
     notes: str,
 ) -> dict[str, Any]:
     payload = load_json(state_path)
-    if payload.get("schema_version") != 3:
-        raise StateError("record-reference-review requires schema_version 3")
+    if payload.get("schema_version") not in {3, 4}:
+        raise StateError("record-reference-review requires schema_version 3 or 4")
     if payload.get("phase") != "reference_self_review":
         raise StateError("reference review requires phase reference_self_review")
     job = next(
@@ -950,7 +1410,7 @@ def record_reference_review(
             job["status"] = "needs_user"
         else:
             project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
-            request_path = project_dir / "生成请求" / f"reference-{reference_id}.json"
+            request_path = requests_root(project_dir) / f"reference-{reference_id}.json"
             current = load_json(request_path)
             origin = current.get("content_repair_origin") or current
             origin_recovery = origin.get("auto_recovery_origin", {})
@@ -1212,7 +1672,7 @@ def queue_repair(
     }
 
 
-def prepare_repair_report(state_path: Path, output: Path) -> dict[str, Any]:
+def prepare_repair_report(state_path: Path, output: Path | None) -> dict[str, Any]:
     payload = load_json(state_path)
     require_writable_state(payload, "prepare-repair-report")
     if payload.get("repair_policy", {}).get("mode") != "deferred_user_approved":
@@ -1240,7 +1700,9 @@ def prepare_repair_report(state_path: Path, output: Path) -> dict[str, Any]:
         item for item in payload["images"] if item.get("repair_recommendation")
     ]
     project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
-    report_path = output.expanduser()
+    report_path = output.expanduser() if output else artifact_path(
+        project_dir, payload, "repair_report", "返修报告.md"
+    )
     if not report_path.is_absolute():
         report_path = project_dir / report_path
     report_path = report_path.resolve()
@@ -1329,6 +1791,10 @@ def authorize_repairs(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+    initialize = subparsers.add_parser(
+        "init-project", help="Create one clean schema-v4 project and its story-stage state"
+    )
+    initialize.add_argument("--project-dir", required=True, type=Path)
     validate = subparsers.add_parser("validate", help="Validate a review-state file")
     validate.add_argument("--state", required=True, type=Path)
     transition = subparsers.add_parser(
@@ -1341,6 +1807,31 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Confirm explicit user approval when crossing an approval gate.",
     )
+    story_approval = subparsers.add_parser(
+        "approve-story", help="Approve the current user-edited story and open planning"
+    )
+    story_approval.add_argument("--state", required=True, type=Path)
+    story_approval.add_argument("--user-approved", action="store_true")
+    storyboard_register = subparsers.add_parser(
+        "register-storyboard", help="Validate both storyboards and create image tasks"
+    )
+    storyboard_register.add_argument("--state", required=True, type=Path)
+    storyboard_register.add_argument("--planned-count", required=True, type=int)
+    storyboard_approval = subparsers.add_parser(
+        "approve-storyboard", help="Approve public and AI production storyboards"
+    )
+    storyboard_approval.add_argument("--state", required=True, type=Path)
+    storyboard_approval.add_argument("--user-approved", action="store_true")
+    reference_approval = subparsers.add_parser(
+        "approve-references", help="Approve all passing reference assets for formal generation"
+    )
+    reference_approval.add_argument("--state", required=True, type=Path)
+    reference_approval.add_argument("--user-approved", action="store_true")
+    reopen = subparsers.add_parser(
+        "reopen-gate", help="Invalidate downstream approvals after editing an approved file"
+    )
+    reopen.add_argument("--state", required=True, type=Path)
+    reopen.add_argument("--gate", required=True, choices=("story", "storyboard"))
     migrate = subparsers.add_parser(
         "migrate", help="Migrate one explicitly selected unfinished state"
     )
@@ -1371,7 +1862,10 @@ def parse_args() -> argparse.Namespace:
         help="Write the repair report after every original candidate is reviewed",
     )
     report.add_argument("--state", required=True, type=Path)
-    report.add_argument("--output", required=True, type=Path)
+    report.add_argument(
+        "--output", type=Path,
+        help="Report path; schema v4 defaults to artifacts.repair_report.",
+    )
     approve = subparsers.add_parser(
         "authorize-repairs",
         help="Authorize report-listed repairs after explicit user approval",
@@ -1413,6 +1907,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
+        if args.command == "init-project":
+            result = init_project(args.project_dir)
+            print(json.dumps({"valid": True, **result}, ensure_ascii=False, indent=2))
+            return 0
         state_path = args.state.expanduser().resolve()
         if args.command == "migrate":
             source = load_json(state_path)
@@ -1443,6 +1941,16 @@ def main() -> int:
                 atomic_write_json(state_path, payload)
                 result = validate_state(state_path)
                 result["backup"] = str(backup)
+        elif args.command == "approve-story":
+            result = approve_story(state_path, args.user_approved)
+        elif args.command == "register-storyboard":
+            result = register_storyboard(state_path, args.planned_count)
+        elif args.command == "approve-storyboard":
+            result = approve_storyboard(state_path, args.user_approved)
+        elif args.command == "approve-references":
+            result = approve_references(state_path, args.user_approved)
+        elif args.command == "reopen-gate":
+            result = reopen_gate(state_path, args.gate)
         elif args.command == "mark-pass":
             result = mark_pass(
                 state_path, args.number, args.notes, args.red_flag
@@ -1484,6 +1992,17 @@ def main() -> int:
             if args.command == "transition":
                 payload = load_json(state_path)
                 require_writable_state(payload, "transition")
+                if payload.get("schema_version") == 4 and (
+                    payload.get("phase"), args.to
+                ) in {
+                    ("awaiting_story_approval", "plan_self_review"),
+                    ("awaiting_storyboard_approval", "reference_self_review"),
+                    ("awaiting_reference_approval", "scene_self_review"),
+                }:
+                    raise StateError(
+                        "schema v4 uses approve-story, approve-storyboard or approve-references "
+                        "to hash approved files"
+                    )
                 validate_transition(
                     payload["phase"], args.to, user_approved=args.user_approved
                 )

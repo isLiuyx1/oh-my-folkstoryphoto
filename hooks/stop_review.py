@@ -11,13 +11,18 @@ from typing import Any
 
 POINTER_NAME = ".oh-my-folkstoryphoto-review.json"
 SAFE_PHASES = {
+    "awaiting_story_approval",
+    "awaiting_storyboard_approval",
     "awaiting_plan_approval",
     "awaiting_reference_approval",
+    "awaiting_repair_approval",
     "complete",
     "needs_user",
 }
 BLOCKING_PHASES = {
     "drafting",
+    "story_self_review",
+    "plan_self_review",
     "text_self_review",
     "reference_self_review",
     "scene_self_review",

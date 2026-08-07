@@ -23,9 +23,11 @@ except ImportError as exc:
 
 from review_state import (
     StateError,
+    artifact_path,
     atomic_write_json,
     atomic_write_text,
     load_json,
+    requests_root,
     resolve_project_dir,
     validate_state,
 )
@@ -75,7 +77,7 @@ REFERENCE_BOARD_SAFETY_CLAUSE = (
     "panel layout, seams, gutters, source composition, duplicated subjects, or extra people."
 )
 AUTO_RECOVERY_LEVELS = 2
-AUTO_REFERENCE_DIR = "生成请求/派生参考"
+AUTO_REFERENCE_SUBDIR = "派生参考"
 
 
 def now_iso() -> str:
@@ -473,9 +475,9 @@ def validate_reference_board(
 def require_v2(state_path: Path) -> tuple[dict[str, Any], Path]:
     validate_state(state_path)
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {2, 3}:
+    if payload.get("schema_version") not in {2, 3, 4}:
         raise StateError(
-            "transport_guard requires schema_version 2 or 3; migrate the selected "
+            "transport_guard requires schema_version 2, 3 or 4; migrate the selected "
             "unfinished project first"
         )
     if payload.get("schema_version") == 2 and payload.get("phase") == "complete":
@@ -487,7 +489,7 @@ def require_v2(state_path: Path) -> tuple[dict[str, Any], Path]:
 def require_legacy_v2(payload: dict[str, Any], command: str) -> None:
     if payload.get("schema_version") != 2:
         raise StateError(
-            f"{command} is a schema v2 compatibility command; schema v3 uses "
+            f"{command} is a schema v2 compatibility command; schema v3/v4 uses "
             "automatic recovery and the blocked report"
         )
 
@@ -504,7 +506,7 @@ def ensure_phase_target(payload: dict[str, Any], target: str) -> None:
 def reconcile_recovery_transactions(
     state_path: Path, payload: dict[str, Any], project_dir: Path
 ) -> list[dict[str, Any]]:
-    if payload.get("schema_version") != 3:
+    if payload.get("schema_version") not in {3, 4}:
         return []
     reconciled: list[dict[str, Any]] = []
     changed = False
@@ -567,19 +569,19 @@ def reference_job(payload: dict[str, Any], reference_id: str) -> dict[str, Any]:
 
 
 def request_path(project_dir: Path, number: int) -> Path:
-    return project_dir / "生成请求" / f"{number:02d}.json"
+    return requests_root(project_dir) / f"{number:02d}.json"
 
 
 def fallback_request_path(project_dir: Path, number: int, backend: str) -> Path:
-    return project_dir / "生成请求" / f"{number:02d}-fallback-{backend}.json"
+    return requests_root(project_dir) / f"{number:02d}-fallback-{backend}.json"
 
 
 def repair_request_path(project_dir: Path, number: int) -> Path:
-    return project_dir / "生成请求" / f"{number:02d}-repair.json"
+    return requests_root(project_dir) / f"{number:02d}-repair.json"
 
 
 def reference_request_path(project_dir: Path, reference_id: str) -> Path:
-    return project_dir / "生成请求" / f"reference-{reference_id}.json"
+    return requests_root(project_dir) / f"reference-{reference_id}.json"
 
 
 def normalize_references(raw_paths: list[Path]) -> list[dict[str, Any]]:
@@ -999,7 +1001,7 @@ def _derived_reference_path(
     transaction: str | None = None,
     attachment_index: int | None = None,
 ) -> Path:
-    directory = project_dir / AUTO_REFERENCE_DIR
+    directory = requests_root(project_dir) / AUTO_REFERENCE_SUBDIR
     kind = "repair" if repair_mode else "original"
     suffix = f"-r{attachment_index}" if attachment_index is not None else ""
     transaction_suffix = f"-{transaction}" if transaction else ""
@@ -1196,7 +1198,7 @@ def record_failure(args: argparse.Namespace) -> dict[str, Any]:
         duration = supplied_elapsed
     budget = int(active.get("runtime_budget_seconds", IMAGE_CALL_TIMEOUT_SECONDS))
     if (
-        payload.get("schema_version") == 3
+        payload.get("schema_version") in {3, 4}
         and args.error_type == "timeout"
         and (duration is None or duration < budget)
     ):
@@ -1899,7 +1901,7 @@ def authorize_reference_board_policy(args: argparse.Namespace) -> dict[str, Any]
             **existing,
             "already_authorized": True,
         }
-    snapshot_dir = project_dir / "生成请求"
+    snapshot_dir = requests_root(project_dir)
     snapshot = next_versioned_path(
         snapshot_dir, "review-state-before-reference-board-policy"
     )
@@ -2433,7 +2435,7 @@ def stage_automatic_reference_job_recovery(
             "started_at": now_iso(),
         },
     )
-    output_dir = project_dir / AUTO_REFERENCE_DIR
+    output_dir = requests_root(project_dir) / AUTO_REFERENCE_SUBDIR
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / f"reference-{job['id']}-auto-l{next_level}-{txid}.jpg"
     temporary = output.with_name(f".{output.stem}-{txid}{output.suffix}")
@@ -2577,7 +2579,7 @@ def record_reference_failure(args: argparse.Namespace) -> dict[str, Any]:
     if payload.get("schema_version") == 2 and supplied_elapsed is not None:
         duration = supplied_elapsed
     budget = int(active.get("runtime_budget_seconds", IMAGE_CALL_TIMEOUT_SECONDS))
-    if payload.get("schema_version") == 3 and args.error_type == "timeout" and (
+    if payload.get("schema_version") in {3, 4} and args.error_type == "timeout" and (
         duration is None or duration < budget
     ):
         raise StateError(
@@ -2759,7 +2761,7 @@ def record_reference_success(args: argparse.Namespace) -> dict[str, Any]:
     )
     job["candidate"] = relative
     job["status"] = "review_pending"
-    if payload.get("schema_version") == 3:
+    if payload.get("schema_version") in {3, 4}:
         versions = job.setdefault("candidate_versions", [])
         if not any(entry.get("candidate") == relative for entry in versions):
             versions.append(
@@ -2829,7 +2831,11 @@ def prepare_blocked_report(args: argparse.Namespace) -> dict[str, Any]:
     ]
     if not blocked_images and not blocked_references:
         raise StateError("there are no transport-blocked jobs to report")
-    output = args.output.expanduser().resolve()
+    output = (
+        args.output.expanduser().resolve()
+        if args.output
+        else artifact_path(project_dir, payload, "blocked_report", "生成阻塞报告.md")
+    )
     try:
         output.relative_to(project_dir)
     except ValueError as exc:
@@ -3110,7 +3116,10 @@ def parse_args() -> argparse.Namespace:
         help="Write one report after every runnable generation job has finished",
     )
     blocked_report.add_argument("--state", required=True, type=Path)
-    blocked_report.add_argument("--output", required=True, type=Path)
+    blocked_report.add_argument(
+        "--output", type=Path,
+        help="Report path; schema v4 defaults to artifacts.blocked_report.",
+    )
     return parser.parse_args()
 
 
