@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ MODULE_PATH = (
     / "scripts"
     / "review_state.py"
 )
+sys.path.append(str(MODULE_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("review_state_caption_policy", MODULE_PATH)
 review_state = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader

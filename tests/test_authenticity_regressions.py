@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 import json
+import sys
 import unittest
 from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SCRIPTS_DIR = HERE.parent / "skills" / "oh-my-folkstoryphoto" / "scripts"
+sys.path.append(str(SCRIPTS_DIR))
 
 import authenticity
 
 
-HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "fixtures" / "authenticity-regressions.json"
 ANCHORS = HERE.parent / "skills" / "oh-my-folkstoryphoto" / "assets" / "capture-style-anchors"
 

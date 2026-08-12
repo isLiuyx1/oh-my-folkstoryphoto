@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -13,6 +14,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image
+
+HERE = Path(__file__).resolve().parent
+SCRIPTS_DIR = (
+    HERE
+    if (HERE / "review_state.py").is_file()
+    else HERE.parent / "skills" / "oh-my-folkstoryphoto" / "scripts"
+)
+sys.path.append(str(SCRIPTS_DIR))
 
 import review_state
 import package_release

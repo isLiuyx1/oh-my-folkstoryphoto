@@ -5,11 +5,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from PIL import Image
+
+HERE = Path(__file__).resolve().parent
+SCRIPTS_DIR = (
+    HERE
+    if (HERE / "review_state.py").is_file()
+    else HERE.parent / "skills" / "oh-my-folkstoryphoto" / "scripts"
+)
+sys.path.append(str(SCRIPTS_DIR))
 
 import authenticity
 import calibration_sheet
