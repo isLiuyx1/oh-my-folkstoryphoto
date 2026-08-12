@@ -1,0 +1,2 @@
+# setup-python uses this conventional file as the pip-cache key.
+-r requirements-dev.txt
