@@ -29,7 +29,7 @@ class V4ProjectTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.project = Path(self.temporary.name) / "story-project"
-        review_state.init_project(self.project)
+        review_state.init_project(self.project, schema_version=4)
         self.state = self.project / "08-系统文件" / "review-state.json"
 
     def tearDown(self) -> None:
@@ -46,7 +46,7 @@ class V4ProjectTest(unittest.TestCase):
         review_state.atomic_write_json(self.state, payload)
         review_state.validate_state(self.state)
 
-    def write_storyboards(self, count: int = 2) -> None:
+    def write_storyboards(self, count: int = 2, *, legacy_production: bool = False) -> None:
         public = self.project / "02-专业分镜表.md"
         rows = [
             "# 专业分镜表",
@@ -56,19 +56,32 @@ class V4ProjectTest(unittest.TestCase):
         ]
         production = self.project / "07-制作资料" / "02-AI生成分镜.md"
         production.parent.mkdir(parents=True, exist_ok=True)
-        ai_rows = [
-            "# AI生成分镜",
-            "",
-            "| 图号 | 唯一证据 | 字幕 | 拍摄来源 | 拍摄原因 | 受限机位 | 人物意识 | 设备/年代 | 成像结果 | 连续性引用 | 真实性风险 |",
-            "|---|---|---|---|---|---|---|---|---|---|---|",
-        ]
+        if legacy_production:
+            ai_rows = [
+                "# AI生成分镜",
+                "",
+                "| 图号 | 唯一证据 | 字幕 | 拍摄来源 | 拍摄原因 | 受限机位 | 人物意识 | 设备/年代 | 成像结果 | 连续性引用 | 真实性风险 |",
+                "|---|---|---|---|---|---|---|---|---|---|---|",
+            ]
+        else:
+            ai_rows = [
+                "# AI生成分镜",
+                "",
+                "| 图号 | 唯一证据 | 画面原生文字 | 发布字幕 | 拍摄来源 | 拍摄原因 | 受限机位 | 人物意识 | 设备/年代 | 成像结果 | 连续性引用 | 真实性风险 |",
+                "|---|---|---|---|---|---|---|---|---|---|---|---|",
+            ]
         for number in range(1, count + 1):
             rows.append(
                 f"| {number:02d} | 场景{number} | 普通手机中景 | 主角继续行动 | 推进信息{number} |"
             )
-            ai_rows.append(
-                f"| {number:02d} | 证据{number} | 字幕{number} | 手机 | 记录 | 门边 | 不看镜头 | 当代 | 轻微噪点 | 上一镜 | 避免摆拍 |"
-            )
+            if legacy_production:
+                ai_rows.append(
+                    f"| {number:02d} | 证据{number} | 字幕{number} | 手机 | 记录 | 门边 | 不看镜头 | 当代 | 轻微噪点 | 上一镜 | 避免摆拍 |"
+                )
+            else:
+                ai_rows.append(
+                    f"| {number:02d} | 证据{number} | 无 | 我在现场发现了第{number}项具体线索 | 手机 | 记录 | 门边 | 不看镜头 | 当代 | 轻微噪点 | 上一镜 | 避免摆拍 |"
+                )
         public.write_text("\n".join(rows) + "\n", encoding="utf-8")
         production.write_text("\n".join(ai_rows) + "\n", encoding="utf-8")
 
@@ -83,6 +96,19 @@ class V4ProjectTest(unittest.TestCase):
         review_state.approve_storyboard(self.state, True)
         self.set_phase("awaiting_reference_approval")
         review_state.approve_references(self.state, True)
+
+    def assert_long_form_registration(self, count: int) -> None:
+        self.write_story()
+        self.set_phase("awaiting_story_approval")
+        review_state.approve_story(self.state, True)
+        self.write_storyboards(count)
+        result = review_state.register_storyboard(self.state, count)
+        payload = review_state.load_json(self.state)
+        self.assertEqual(result["planned_count"], count)
+        self.assertEqual(payload["planned_count"], count)
+        self.assertEqual(len(payload["images"]), count)
+        self.assertEqual(payload["images"][-1]["number"], count)
+        self.assertEqual(payload["artifacts"]["release_dir"], f"04-最终发布版-{count}图")
 
     def test_init_creates_only_current_user_file_and_system_state(self) -> None:
         self.assertEqual(
@@ -106,6 +132,12 @@ class V4ProjectTest(unittest.TestCase):
         self.assertIn("references", payload["approvals"])
         self.assertEqual(payload["artifacts"]["release_dir"], "04-最终发布版-2图")
 
+    def test_30_frame_long_form_storyboard_registers_contiguously(self) -> None:
+        self.assert_long_form_registration(30)
+
+    def test_39_frame_long_form_storyboard_registers_contiguously(self) -> None:
+        self.assert_long_form_registration(39)
+
     def test_public_storyboard_rejects_internal_or_extra_columns(self) -> None:
         self.write_story()
         self.set_phase("awaiting_story_approval")
@@ -119,6 +151,47 @@ class V4ProjectTest(unittest.TestCase):
             encoding="utf-8",
         )
         with self.assertRaisesRegex(review_state.StateError, "columns must be exactly"):
+            review_state.register_storyboard(self.state, 1)
+
+    def test_preferred_production_storyboard_separates_native_text_and_caption(self) -> None:
+        self.write_storyboards(1)
+        production = self.project / "07-制作资料" / "02-AI生成分镜.md"
+        numbers, header = review_state.parse_production_storyboard(production)
+        self.assertEqual(numbers, [1])
+        self.assertEqual(header, review_state.PRODUCTION_STORYBOARD_COLUMNS)
+        self.assertIn("画面原生文字", header)
+        self.assertIn("发布字幕", header)
+
+    def test_legacy_production_storyboard_remains_compatible(self) -> None:
+        self.write_story()
+        self.set_phase("awaiting_story_approval")
+        review_state.approve_story(self.state, True)
+        self.write_storyboards(1, legacy_production=True)
+        result = review_state.register_storyboard(self.state, 1)
+        self.assertEqual(result["planned_count"], 1)
+
+    def test_production_storyboard_rejects_unknown_or_incomplete_columns(self) -> None:
+        self.write_story()
+        self.set_phase("awaiting_story_approval")
+        review_state.approve_story(self.state, True)
+        self.write_storyboards(1)
+        production = self.project / "07-制作资料" / "02-AI生成分镜.md"
+        original = production.read_text(encoding="utf-8")
+        production.write_text(
+            original.replace("真实性风险 |", "真实性风险 | 未知字段 |", 1),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(review_state.StateError, "preferred v4.2 or legacy v4"):
+            review_state.register_storyboard(self.state, 1)
+
+        self.write_storyboards(1)
+        production.write_text(
+            production.read_text(encoding="utf-8").replace(
+                "| 01 | 证据1 | 无 | 我在现场发现了第1项具体线索 |", "| 01 | 证据1 | | 我在现场发现了第1项具体线索 |"
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(review_state.StateError, "empty production field"):
             review_state.register_storyboard(self.state, 1)
 
     def test_editing_approved_story_blocks_work_until_gate_reopens(self) -> None:

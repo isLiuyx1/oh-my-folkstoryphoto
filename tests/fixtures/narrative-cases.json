@@ -1,0 +1,34 @@
+{
+  "traceable_evidence_relay": {
+    "evidence_carriers": [
+      "personal_album",
+      "family_archive",
+      "field_document",
+      "surveillance_rephotograph"
+    ],
+    "provenance_complete": true,
+    "repeated_without_new_evidence": false,
+    "ending_reinterprets_prior_clues": 3,
+    "expected": "pass"
+  },
+  "letterboxed_surveillance": {
+    "failures": ["horizontal evidence pasted into a vertical canvas with black bars"],
+    "expected": "fail"
+  },
+  "repeated_hole_views": {
+    "failures": ["three consecutive views repeat the same location and anomaly without new evidence"],
+    "expected": "fail"
+  },
+  "untraceable_cctv": {
+    "failures": ["surveillance image has no creator, time, acquisition path, or retention reason"],
+    "expected": "fail"
+  },
+  "cinematic_drift": {
+    "failures": ["ordinary phone source abruptly becomes a cinematic horror poster"],
+    "expected": "fail"
+  },
+  "jump_scare_only_ending": {
+    "failures": ["final frame is only a face-level monster scare and resolves no prior clue"],
+    "expected": "fail"
+  }
+}

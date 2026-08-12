@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "usage": "Capture artifacts only. Never copy people, places, actions, text, UI, props, or source composition.",
+  "anchors": [
+    {
+      "id": "dv-tape-outdoor-01",
+      "file": "dv-tape-outdoor-01.jpg",
+      "profile": "1990年代至2000年代磁带式家用摄像机",
+      "learn": ["有限色度分辨率", "家用自动曝光", "业余低机位", "轻微模拟录像感"],
+      "ignore": ["人物", "森林地点", "PLAY叠字", "虚构1984日期"]
+    },
+    {
+      "id": "dv-tape-outdoor-02",
+      "file": "dv-tape-outdoor-02.jpg",
+      "profile": "1990年代至2000年代磁带式家用摄像机",
+      "learn": ["高光截断", "色彩压缩", "随行录像构图", "有限清晰度"],
+      "ignore": ["人物", "建筑地点", "PLAY叠字", "虚构1984日期"]
+    },
+    {
+      "id": "phone-indoor-candid",
+      "file": "phone-indoor-candid.png",
+      "profile": "当代中低端手机",
+      "learn": ["室内顶灯", "门框遮挡", "偏心人物", "普通深景深"],
+      "ignore": ["人物身份", "工作室", "桌面内容"]
+    },
+    {
+      "id": "phone-obstructed-work",
+      "file": "phone-obstructed-work.png",
+      "profile": "当代中低端手机",
+      "learn": ["杂物遮挡", "工作记录动机", "自然裁切", "普通自动曝光"],
+      "ignore": ["人物身份", "维修间", "设备道具"]
+    },
+    {
+      "id": "phone-lowlight-limited-range",
+      "file": "phone-lowlight-limited-range.png",
+      "profile": "当代中低端手机",
+      "learn": ["低照度", "暗部损失", "局部红灯高光", "受限门框机位"],
+      "ignore": ["人物身份", "船舱", "控制台"]
+    },
+    {
+      "id": "phone-narrow-exposure",
+      "file": "phone-narrow-exposure.png",
+      "profile": "当代中低端手机",
+      "learn": ["洞口狭窄机位", "内暗外亮", "普通手机动态范围", "不完整全景"],
+      "ignore": ["村庄", "洞穴地点", "故事内容"]
+    }
+  ]
+}
