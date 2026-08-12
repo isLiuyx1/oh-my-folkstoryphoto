@@ -14,6 +14,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import authenticity
+import review_state
+
 try:
     from PIL import Image
 except ImportError as exc:
@@ -475,9 +478,9 @@ def validate_reference_board(
 def require_v2(state_path: Path) -> tuple[dict[str, Any], Path]:
     validate_state(state_path)
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {2, 3, 4}:
+    if payload.get("schema_version") not in {2, 3, 4, 5}:
         raise StateError(
-            "transport_guard requires schema_version 2, 3 or 4; migrate the selected "
+            "transport_guard requires schema_version 2, 3, 4 or 5; migrate the selected "
             "unfinished project first"
         )
     if payload.get("schema_version") == 2 and payload.get("phase") == "complete":
@@ -495,7 +498,10 @@ def require_legacy_v2(payload: dict[str, Any], command: str) -> None:
 
 
 def ensure_phase_target(payload: dict[str, Any], target: str) -> None:
-    current = eligible_job_type(str(payload.get("phase")))
+    phase = str(payload.get("phase"))
+    if payload.get("schema_version") == 5 and target == "scene" and phase == "calibration_self_review":
+        return
+    current = eligible_job_type(phase)
     if current != target:
         expected = {"scene": "scene_self_review", "reference": "reference_self_review", "repair": "repairing"}.get(target, target)
         raise StateError(
@@ -506,7 +512,7 @@ def ensure_phase_target(payload: dict[str, Any], target: str) -> None:
 def reconcile_recovery_transactions(
     state_path: Path, payload: dict[str, Any], project_dir: Path
 ) -> list[dict[str, Any]]:
-    if payload.get("schema_version") not in {3, 4}:
+    if payload.get("schema_version") not in {3, 4, 5}:
         return []
     reconciled: list[dict[str, Any]] = []
     changed = False
@@ -620,6 +626,9 @@ def request_core(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "prompt_sha256": request["prompt_sha256"],
         "reference_sha256": reference_fingerprints(request["references"]),
+        "reference_kinds": request.get("reference_kinds", []),
+        "capture_id": request.get("capture_id"),
+        "device_visibility": request.get("device_visibility"),
     }
 
 
@@ -632,6 +641,10 @@ def create_request(
     prompt_hash: str,
     references: list[dict[str, Any]],
     reference_roles: list[str] | None = None,
+    reference_kinds: list[str] | None = None,
+    capture_id: str | None = None,
+    device_visibility: str | None = None,
+    authored_prompt: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -645,6 +658,10 @@ def create_request(
         "prompt_summary": prompt_summary(prompt),
         "references": references,
         "reference_roles": reference_roles or [],
+        "reference_kinds": reference_kinds or [],
+        "capture_id": capture_id,
+        "device_visibility": device_visibility,
+        "authored_prompt": authored_prompt,
     }
 
 
@@ -659,6 +676,10 @@ def changed_inputs(
         ),
         "references_changed": (
             base_core["reference_sha256"] != current_core["reference_sha256"]
+        ),
+        "metadata_changed": any(
+            base_core[key] != current_core[key]
+            for key in ("reference_kinds", "capture_id", "device_visibility")
         ),
         "base_prompt_sha256": base_core["prompt_sha256"],
         "current_prompt_sha256": current_core["prompt_sha256"],
@@ -710,12 +731,47 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
     repair_mode = getattr(args, "repair_mode", None)
     ensure_phase_target(payload, "repair" if repair_mode else "scene")
     batch, batch_auto_started = ensure_active_batch(payload)
-    prompt, prompt_hash = prompt_payload(args.prompt_file)
-    validate_4x5_prompt(prompt)
+    authored_prompt, prompt_hash = prompt_payload(args.prompt_file)
+    prompt = authored_prompt
+    validate_4x5_prompt(authored_prompt)
     references = normalize_references(args.reference)
     reference_roles, reference_role_warnings = normalize_reference_roles(
         getattr(args, "reference_role", []), references
     )
+    reference_kinds = [value.strip() for value in getattr(args, "reference_kind", []) if value.strip()]
+    capture_id = getattr(args, "capture_id", None)
+    device_visibility = getattr(args, "device_visibility", None)
+    if payload.get("schema_version") == 5:
+        if payload.get("phase") == "calibration_self_review" and args.number not in payload.get("calibration_numbers", []):
+            raise StateError("only the three registered calibration images may generate before calibration approval")
+        if not capture_id or not device_visibility:
+            raise StateError("schema v5 preflight requires --capture-id and --device-visibility")
+        if device_visibility not in authenticity.DEVICE_VISIBILITY:
+            raise StateError("invalid --device-visibility")
+        rows = review_state.parse_v5_production_rows(artifact_path(project_dir, payload, "ai_storyboard"))
+        row = next((value for value in rows if int(value["图号"]) == args.number), None)
+        if row is None:
+            raise StateError(f"image {args.number} is missing from the v5 production storyboard")
+        if row["采集配置ID"] != capture_id:
+            raise StateError(f"capture-id must match storyboard value {row['采集配置ID']}")
+        if row["设备可见性"] != device_visibility:
+            raise StateError(f"device-visibility must match storyboard value {row['设备可见性']}")
+        if len(reference_kinds) != len(references):
+            raise StateError("schema v5 --reference-kind count must equal --reference count")
+        if references and len(reference_roles) != len(references):
+            raise StateError("schema v5 requires a --reference-role for every reference")
+        invalid_kinds = [value for value in reference_kinds if value not in authenticity.REFERENCE_KINDS]
+        if invalid_kinds:
+            raise StateError("invalid reference kinds: " + ", ".join(invalid_kinds))
+        try:
+            authenticity.validate_authored_prompt(authored_prompt)
+        except authenticity.AuthenticityError as exc:
+            raise StateError(str(exc)) from exc
+        prompt = authenticity.materialize_prompt(
+            authored_prompt,
+            needs_reference_safety=bool(references),
+        )
+        prompt_hash = sha256_bytes(prompt.encode("utf-8"))
     if (
         len(references) > DEFAULT_REFERENCE_LIMIT
         and not getattr(args, "allow_high_reference_count", False)
@@ -731,9 +787,8 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
     }[args.backend]
     route = args.route or default_route
     model = args.model
-    validate_reference_board_safe_prompt(
-        prompt, payload, references, repair_mode
-    )
+    if payload.get("schema_version") != 5:
+        validate_reference_board_safe_prompt(prompt, payload, references, repair_mode)
 
     if repair_mode:
         if item["status"] != "review_pending":
@@ -800,14 +855,34 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
         prompt_hash,
         references,
         reference_roles,
+        reference_kinds,
+        capture_id,
+        device_visibility,
+        authored_prompt if payload.get("schema_version") == 5 else None,
     )
+    if payload.get("schema_version") == 5 and repair_mode == "regenerate":
+        original_path = request_path(project_dir, args.number)
+        if not original_path.is_file():
+            raise StateError("v5 regenerate repair requires the original request snapshot")
+        original = _auto_recovery_origin(load_json(original_path))
+        old_identity = [
+            ref["sha256"] for ref, kind in zip(
+                original.get("references", []), original.get("reference_kinds", []), strict=False
+            ) if kind == "identity"
+        ]
+        new_identity = [
+            ref["sha256"] for ref, kind in zip(references, reference_kinds, strict=False)
+            if kind == "identity"
+        ]
+        if old_identity != new_identity:
+            raise StateError("regenerate repair must inherit the original identity reference hashes")
     if args.backend == BUILT_IN_BACKEND:
         if model is not None:
             raise StateError("built_in_imagegen preflight must not specify --model")
         if base_path.exists():
             base = load_json(base_path)
             differences = changed_inputs(base, current)
-            if differences["prompt_changed"] or differences["references_changed"]:
+            if differences["prompt_changed"] or differences["references_changed"] or differences["metadata_changed"]:
                 raise StateError(
                     "built-in retry input drift detected; keep the approved prompt "
                     "and required references unchanged"
@@ -942,6 +1017,9 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
         "reference_summary": summary,
         "prompt_summary": text_summary,
         "reference_roles": reference_roles,
+        "reference_kinds": reference_kinds,
+        "capture_id": capture_id,
+        "device_visibility": device_visibility,
         "warnings": reference_role_warnings,
         "runtime_budget_seconds": runtime_budget,
         "input_differences": differences,
@@ -977,6 +1055,10 @@ def _auto_recovery_origin(request: dict[str, Any]) -> dict[str, Any]:
             roles[index] if index < len(roles) else f"reference {index + 1} continuity anchor"
             for index in range(len(references))
         ],
+        "reference_kinds": json.loads(json.dumps(request.get("reference_kinds") or [])),
+        "capture_id": request.get("capture_id"),
+        "device_visibility": request.get("device_visibility"),
+        "authored_prompt": request.get("authored_prompt"),
     }
 
 
@@ -1122,6 +1204,17 @@ def stage_automatic_reference_recovery(
         revised = create_request(
             int(item["number"]), current["backend"], current["route"], current.get("model"),
             current["prompt"], current["prompt_sha256"], references, roles,
+            (
+                [
+                    "identity" if "identity" in origin.get("reference_kinds", [])
+                    else (origin.get("reference_kinds") or ["location"])[0]
+                ]
+                if len(references) == 1 and len(origin.get("reference_kinds", [])) > 1
+                else list(origin.get("reference_kinds", []))[: len(references)]
+            ),
+            origin.get("capture_id"),
+            origin.get("device_visibility"),
+            origin.get("authored_prompt"),
         )
         revised["auto_recovery_origin"] = origin
         revised["recovery_transaction_id"] = txid
@@ -1198,7 +1291,7 @@ def record_failure(args: argparse.Namespace) -> dict[str, Any]:
         duration = supplied_elapsed
     budget = int(active.get("runtime_budget_seconds", IMAGE_CALL_TIMEOUT_SECONDS))
     if (
-        payload.get("schema_version") in {3, 4}
+        payload.get("schema_version") in {3, 4, 5}
         and args.error_type == "timeout"
         and (duration is None or duration < budget)
     ):
@@ -1459,8 +1552,25 @@ def record_success(args: argparse.Namespace) -> dict[str, Any]:
         item["repair_count"] = 1
         item["repair_mode"] = repair_mode
         item["repair_file"] = candidate_relative
+        if payload.get("schema_version") == 5:
+            item["hard_failures"] = []
+            item["photo_red_flags"] = []
     else:
         item["candidate"] = candidate_relative
+    if payload.get("schema_version") == 5:
+        versions = item.setdefault("candidate_versions", [])
+        versions.append(
+            {
+                "version": len(versions) + 1,
+                "candidate": candidate_relative,
+                "kind": "repair" if repair_mode else (
+                    "calibration" if payload.get("phase") == "calibration_self_review" else "original"
+                ),
+                "request_file": transport.get("request_file"),
+                "review": None,
+                "review_record": None,
+            }
+        )
     item["status"] = "review_pending"
     batch = batch_record(payload)
     if batch_is_active(batch):
@@ -2049,6 +2159,13 @@ def stage_reference_board_fallback(args: argparse.Namespace) -> dict[str, Any]:
         old["prompt_sha256"],
         board_references,
         [combined_role],
+        [
+            "identity" if "identity" in old.get("reference_kinds", [])
+            else (old.get("reference_kinds") or ["location"])[0]
+        ],
+        old.get("capture_id"),
+        old.get("device_visibility"),
+        old.get("authored_prompt"),
     )
     staged_at = now_iso()
     revised["reference_board_fallback"] = {
@@ -2579,7 +2696,7 @@ def record_reference_failure(args: argparse.Namespace) -> dict[str, Any]:
     if payload.get("schema_version") == 2 and supplied_elapsed is not None:
         duration = supplied_elapsed
     budget = int(active.get("runtime_budget_seconds", IMAGE_CALL_TIMEOUT_SECONDS))
-    if payload.get("schema_version") in {3, 4} and args.error_type == "timeout" and (
+    if payload.get("schema_version") in {3, 4, 5} and args.error_type == "timeout" and (
         duration is None or duration < budget
     ):
         raise StateError(
@@ -2761,7 +2878,7 @@ def record_reference_success(args: argparse.Namespace) -> dict[str, Any]:
     )
     job["candidate"] = relative
     job["status"] = "review_pending"
-    if payload.get("schema_version") in {3, 4}:
+    if payload.get("schema_version") in {3, 4, 5}:
         versions = job.setdefault("candidate_versions", [])
         if not any(entry.get("candidate") == relative for entry in versions):
             versions.append(
@@ -2950,6 +3067,19 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         help="Human-readable identity/purpose for the matching --reference",
+    )
+    pre.add_argument(
+        "--reference-kind",
+        action="append",
+        default=[],
+        choices=sorted(authenticity.REFERENCE_KINDS),
+        help="Machine-readable role for the matching --reference (schema v5)",
+    )
+    pre.add_argument("--capture-id", help="Approved schema-v5 capture configuration ID")
+    pre.add_argument(
+        "--device-visibility",
+        choices=sorted(authenticity.DEVICE_VISIBILITY),
+        help="Must match the schema-v5 production storyboard",
     )
     pre.add_argument("--repair-mode", choices=("edit", "regenerate"))
     pre.add_argument(

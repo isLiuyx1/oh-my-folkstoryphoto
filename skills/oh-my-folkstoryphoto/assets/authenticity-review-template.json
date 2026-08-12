@@ -1,0 +1,14 @@
+{
+  "checks": {
+    "viewpoint_physics": "pass",
+    "unplanned_recorder_absent": "pass",
+    "capture_profile_match": "pass",
+    "not_cinematic": "pass",
+    "identity_match": "na",
+    "key_prop_match": "na",
+    "continuity_match": "pass",
+    "defects_are_causal": "pass"
+  },
+  "red_flags": [],
+  "notes": "逐项查看实际候选图后填写；人物或关键道具确实不在本镜时才可使用na。"
+}

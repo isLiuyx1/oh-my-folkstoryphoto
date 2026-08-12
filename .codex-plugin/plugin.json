@@ -1,7 +1,7 @@
 {
   "name": "oh-my-folkstoryphoto",
-  "version": "4.0.0",
-  "description": "Create self-reviewed Chinese folk-story photo carousels with a story-first workflow, public storyboards, and v4 numbered project layouts.",
+  "version": "5.0.0",
+  "description": "Create long-form Chinese folk-story photo carousels with an approved capture-realism plan, three-shot calibration, traceable evidence chains, and structured review.",
   "author": {
     "name": "isliuyx"
   },
@@ -15,8 +15,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "oh-my-FolkStoryPhoto",
-    "shortDescription": "创作并自审真实手机相册感的民间故事图文",
-    "longDescription": "从用户可直接修改的故事脚本开始，依次确认专业分镜和人物母版，再生成具有可信拍摄来源的手机伪纪录图文；用户交付、制作资料与系统状态按编号目录分层保存。",
+    "shortDescription": "先确认手机或旧DV真实性，再创作伪纪录图文",
+    "longDescription": "先确认拍摄者、主设备、辅助设备与因果画质，再依次确认故事、专业分镜、参考图和三张真实性校准；校准通过后生成具有长篇证据链、清晰发布字幕和结构化硬失败审查的手机或旧DV伪纪录图文。",
     "developerName": "isliuyx",
     "category": "Creativity",
     "capabilities": [
@@ -25,9 +25,10 @@
       "Image generation"
     ],
     "defaultPrompt": [
-      "使用 $oh-my-folkstoryphoto，根据我提供的灵感先写一版可直接修改的故事脚本。",
-      "使用 $oh-my-folkstoryphoto，把这个传说改编成真实手机相册感的图文。",
-      "使用 $oh-my-folkstoryphoto，检查这个项目并完成自审返修。"
+      "使用 $oh-my-folkstoryphoto，根据我的灵感先提出可选真实性设备方案。",
+      "使用 $oh-my-folkstoryphoto，把这个传说改编成真实手机或旧DV伪纪录图文。",
+      "使用 $oh-my-folkstoryphoto，检查这个项目的视角物理、设备连续性和电影化漂移。",
+      "使用 $oh-my-folkstoryphoto，预演并安全整理现有民间故事工作区。"
     ]
   }
 }

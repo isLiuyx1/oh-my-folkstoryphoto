@@ -1,0 +1,61 @@
+{
+  "schema_version": 2,
+  "cases": [
+    {
+      "id": "dv-tape-outdoor-01",
+      "visual_asset": "dv-tape-outdoor-01.jpg",
+      "expected": "pass",
+      "failed_checks": []
+    },
+    {
+      "id": "dv-tape-outdoor-02",
+      "visual_asset": "dv-tape-outdoor-02.jpg",
+      "expected": "pass",
+      "failed_checks": []
+    },
+    {
+      "id": "phone-indoor-candid",
+      "visual_asset": "phone-indoor-candid.png",
+      "expected": "pass",
+      "failed_checks": []
+    },
+    {
+      "id": "phone-obstructed-work",
+      "visual_asset": "phone-obstructed-work.png",
+      "expected": "pass",
+      "failed_checks": []
+    },
+    {
+      "id": "phone-lowlight-limited-range",
+      "visual_asset": "phone-lowlight-limited-range.png",
+      "expected": "pass",
+      "failed_checks": []
+    },
+    {
+      "id": "phone-narrow-exposure",
+      "visual_asset": "phone-narrow-exposure.png",
+      "expected": "pass",
+      "failed_checks": []
+    },
+    {
+      "id": "unplanned-recorder-contract",
+      "expected": "fail",
+      "failed_checks": ["unplanned_recorder_absent"]
+    },
+    {
+      "id": "cinematic-drift-contract",
+      "expected": "fail",
+      "failed_checks": ["not_cinematic"]
+    },
+    {
+      "id": "capture-profile-drift-contract",
+      "expected": "fail",
+      "failed_checks": ["capture_profile_match"]
+    },
+    {
+      "id": "key-prop-drift-contract",
+      "expected": "fail",
+      "failed_checks": ["key_prop_match"]
+    }
+  ]
+}
