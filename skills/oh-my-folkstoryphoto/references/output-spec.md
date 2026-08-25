@@ -2,7 +2,7 @@
 
 ## 目录
 
-- [schema v5 新项目目录](#schema-v5-新项目目录)
+- [schema v6 新项目目录](#schema-v6-新项目目录)
 - [工作区目录](#工作区目录)
 - [用户分镜与 AI 分镜](#用户分镜与-ai-分镜)
 - [review-state.json](#review-statejson)
@@ -28,7 +28,7 @@
 
 现有工作区重排使用 `workspace_layout.py organize`，默认只输出计划；只有显式 `--apply` 才执行。命令拒绝活动生图锁，保留文本状态备份，更新绝对路径、跨项目引用和活动指针，并验证项目数量与旧路径残留。禁止手工拖动带 `review-state.json` 的项目。
 
-## schema v5 新项目目录
+## schema v6 新项目目录
 
 ```text
 <主题目录>/
@@ -49,6 +49,7 @@
 │   ├── 01-原始生成图/
 │   ├── 02-返修记录/
 │   └── 03-当前总览/
+│       └── 首轮原图总览.jpg
 ├── 07-制作资料/
 │   ├── 01-创作方案.md
 │   ├── 02-AI生成分镜.md
@@ -83,7 +84,7 @@
 
 每行必须填满，图号从 01 连续到 NN。字幕不在这里重复，统一保存在发布说明和 AI 分镜中。
 
-`07-制作资料/02-AI生成分镜.md` schema v5使用生产字段：
+`07-制作资料/02-AI生成分镜.md` schema v5/v6使用生产字段：
 
 | 图号 | 唯一证据 | 画面原生文字 | 发布字幕 | 采集配置ID | 拍摄者 | 拍摄原因 | 受限机位 | 拍摄者入镜范围 | 设备可见性 | 人物意识 | 成像结果 | 连续性引用 | 校准角色 | 真实性风险 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -93,6 +94,8 @@
 两张表的图数、顺序和核心画面含义必须对应。只有 AI 分镜用于提示词、参考计划、真实性自审和传输请求。
 
 ## review-state.json
+
+新项目使用schema v6。schema v5继续兼容原有逐图首审流程；只有用户明确执行 `migrate --to-version 6` 才升级未完成v5项目，并在写入前备份状态。若用户明确要求撤销已有首审并回到总览选择门槛，额外传 `--reset-first-review`；该选项清除当前生效的非校准首审与返修队列，但完整v5备份和历史审查文件仍保留。
 
 新项目必须用初始化命令创建：
 
@@ -105,7 +108,7 @@ python3 <skill-dir>/scripts/workspace_layout.py init-project \
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "project_dir": "..",
   "phase": "realism_self_review",
   "planned_count": null,
@@ -128,7 +131,7 @@ python3 <skill-dir>/scripts/workspace_layout.py init-project \
 
 完整 `artifacts` 还必须包含校准、真实性审查、参考素材、生成过程、制作资料、报告和备份路径。v5校验器拒绝被改名或移出编号目录的固定路径；`release_dir` 在登记图数后改为实际目录。
 
-允许阶段：
+schema v6允许阶段：
 
 ```text
 realism_self_review
@@ -142,12 +145,23 @@ realism_self_review
 → awaiting_reference_approval
 → calibration_self_review
 → awaiting_calibration_approval
+→ scene_generation
+→ awaiting_first_review_decision
 → scene_self_review
 → awaiting_repair_approval
 → repairing
 → final_self_review
 → complete / needs_user
 ```
+
+已完成schema v6项目可另外进入文字专修：
+
+```text
+complete → text_revision_self_review → awaiting_text_revision_approval → complete
+                                      └─ revert-text-revision → complete
+```
+
+该事务只允许覆盖 `01-故事脚本.md`、`03-发布文件说明.md` 和 `07-制作资料/02-AI生成分镜.md` 的发布字幕列。备份存于 `08-系统文件/02-状态备份/text-revision-<timestamp>/`；完成后保留新旧哈希和审批时间。
 
 分镜登记后才创建连续图片任务：
 

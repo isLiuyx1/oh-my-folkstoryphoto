@@ -49,7 +49,8 @@ class LongFormNarrativePolicyTests(unittest.TestCase):
         visual = self.read("references/visual-language.md")
         checklist = self.read("references/quality-checklist.md")
         for phrase in (
-            "建议 12–36 个汉字、硬范围 8–48 个可见字符",
+            "必须非空且不超过48个可见字符",
+            "连续三图测试",
             "不机械复述画面",
             "形成者、时间、获取途径和保留原因",
             "不得以横图加上下黑边",

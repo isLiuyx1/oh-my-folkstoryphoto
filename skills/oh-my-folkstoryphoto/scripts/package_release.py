@@ -64,8 +64,8 @@ def verify_state_for_packaging(state_path: Path, manifest_path: Path) -> tuple[P
     manifest_path = manifest_path.expanduser().resolve()
     summary = validate_state(state_path)
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {2, 3, 4, 5}:
-        raise ValueError("--state packaging guard requires schema_version 2, 3, 4 or 5")
+    if payload.get("schema_version") not in {2, 3, 4, 5, 6}:
+        raise ValueError("--state packaging guard requires schema_version 2, 3, 4, 5 or 6")
     if summary["phase"] not in {"final_self_review", "complete"}:
         raise ValueError(
             "--state must be in final_self_review or complete before packaging"
@@ -228,11 +228,11 @@ def main() -> int:
         raise SystemExit(f"Invalid manifest: {exc}") from exc
 
     output_dir = args.output_dir.expanduser().resolve()
-    if state_payload is not None and state_payload.get("schema_version") in {4, 5}:
+    if state_payload is not None and state_payload.get("schema_version") in {4, 5, 6}:
         expected_output = artifact_path(project_dir, state_payload, "release_dir")
         if output_dir != expected_output:
             raise SystemExit(
-                f"Schema v4/v5 output directory must match artifacts.release_dir: {expected_output}"
+                f"Schema v4/v5/v6 output directory must match artifacts.release_dir: {expected_output}"
             )
     output_dir.mkdir(parents=True, exist_ok=True)
     release_paths = [

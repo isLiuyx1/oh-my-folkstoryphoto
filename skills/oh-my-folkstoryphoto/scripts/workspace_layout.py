@@ -532,7 +532,7 @@ def init_workspace_project(workspace: Path, project_name: str) -> dict[str, Any]
     ongoing = workspace / ONGOING_DIR
     ongoing.mkdir(parents=True, exist_ok=True)
     project_dir = versioned_project_dir(ongoing, safe_project_name(project_name))
-    result = review_state.init_project(project_dir)
+    result = review_state.init_project(project_dir, schema_version=6)
     state_path = project_dir / "08-系统文件" / "review-state.json"
     pointer = {"state_file": state_path.relative_to(workspace).as_posix()}
     atomic_write_text(

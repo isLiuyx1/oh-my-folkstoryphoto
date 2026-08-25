@@ -35,7 +35,7 @@ python3 <skill-dir>/scripts/workspace_layout.py init-project \
   --workspace /workspace --project-name <主题>
 ```
 
-命令选择未占用的版本化名称，在 `01-进行中项目/` 创建schema v5项目并更新活动指针。第一阶段只创建 `00-真实性方案.md` 和状态文件；不得提前创建故事、分镜或图片任务。
+命令选择未占用的版本化名称，在 `01-进行中项目/` 创建schema v6项目并更新活动指针。第一阶段只创建 `00-真实性方案.md` 和状态文件；不得提前创建故事、分镜或图片任务。
 
 用户明确要求整理旧工作区时，必须先预演：
 
@@ -45,7 +45,7 @@ python3 <skill-dir>/scripts/workspace_layout.py organize --workspace /workspace
 
 预演按状态而非原文件夹名称分类：`phase=complete` 进入 `02-已完成作品/`，其余状态进入 `01-进行中项目/`；无状态旧项目只有同时存在最终发布目录和验收记录时才可判为完成。存在 `generating`、`active_attempt`、目标冲突或无法判定的旧项目时拒绝执行。预演无阻断且用户已授权整理后运行同一命令并加 `--apply`。执行前备份所有将被改写的文本状态，移动后同步更新绝对路径、跨项目引用和活动指针；校验失败自动回滚。该操作只重定位父目录，旧项目仍按原 schema 和内部目录继续，不做 v1–v3→v4 迁移。
 
-状态必须按以下顺序推进：
+schema v6状态按以下顺序推进：
 
 `transport_guard.py` 与 `package_release.py` 需要 Pillow。若系统 `python3` 缺少 Pillow，在 Codex Desktop 先加载工作区依赖，再使用返回的捆绑 Python 路径；不要因依赖错误跳过预检。
 
@@ -61,6 +61,8 @@ realism_self_review
 → awaiting_reference_approval
 → calibration_self_review
 → awaiting_calibration_approval
+→ scene_generation
+→ awaiting_first_review_decision
 → scene_self_review
 → awaiting_repair_approval
 → repairing
@@ -105,7 +107,7 @@ python3 <skill-dir>/scripts/review_state.py approve-story \
 3. 主角身份、动机、同行者和见证者。
 4. 现实基线、异常入口、渐进发现、撤离、验证和最终证据。
 5. 默认 30–39 图长篇证据链，每张只承担一个主要信息点。用户明确指定其他图数时可覆盖默认值，并在创作方案记录原因。
-6. 每图一句只供平台发布的第一人称发布字幕；遵循“一图一句、一句一推进”，建议 12–36 个汉字、硬范围 8–48 个可见字符，补充因果、来源或疑问，不机械复述画面。
+6. 每图一句只供平台发布的第一人称发布字幕；非空且不超过48个可见字符，多数建议4–28字，补充画面看不见的时间、原因、选择、声音或反应。
 7. 每图的场景原生文字：载体、精确内容、语言和是否关键证据；没有时写“无”。
 8. 人物、服装、道具、地点、季节和设备连续性。
 9. 每张的可信拍摄事件。
@@ -131,7 +133,7 @@ python3 <skill-dir>/scripts/review_state.py approve-story \
 
 ### 发布字幕写法
 
-发布字幕采用口语化第一人称，像当事人在按顺序讲亲历故事，不写成诗、预告片文案、谜语或抽象旁白。每句至少包含“具体主语或对象＋具体动作或变化＋本图新增信息”中的前两项，并优先补足第三项。
+发布字幕采用声音卡中的说话方式，像当事人在那一刻说话，不写成诗、预告片文案、谜语、论文结论或抽象旁白。允许短句、停顿、改口和没说完，不强迫每句套入同一语法模板。
 
 按八段式节拍选择字幕功能：
 
@@ -144,11 +146,11 @@ python3 <skill-dir>/scripts/review_state.py approve-story \
 7. 亲历升级：写清主角此刻看到、听到或遭遇的具体变化。
 8. 证据余波：交代留下了什么结果、缺失、变化或反证。
 
-逐句执行独立阅读测试：暂时遮住前后字幕，只看当前图片和当前句，读者仍应能回答“谁或什么、发生了什么、这张为什么重要”。代词可以使用，但同句必须有明确指向；不得用“这件事、那里、他们、那个东西”代替尚未出现的关键名词。禁止“情况越来越不对劲”“我看到了无法解释的东西”“接下来发生的事让我终生难忘”“这一幕太诡异了”等空洞悬念占位句。
+逐组执行连续三图测试：相邻2–3张字幕要像同一个人的连续经历，可以使用前图已建立的代词。禁止“情况越来越不对劲”“我看到了无法解释的东西”等空洞悬念占位句。对每句再做朗读测试和删字幕测试。
 
 字幕不应逐字描述画面已有信息，而应补充关系、时间、原因、来源或结果。例如画面已经能看见洞口，字幕应说明“谁在什么工作中挖到它”或“第二来源何时记录到变化”，而不是只写“地上有一个洞”。相邻字幕避免连续三句使用相同开头，如“后来”“然后”“那天”；连续性依靠因果推进，不依靠机械连接词。
 
-根目录 `02-专业分镜表.md` 只用五列。schema v5 AI分镜必须使用采集配置ID、拍摄者、拍摄者入镜范围、设备可见性和校准角色；主配置至少覆盖一半，三种校准角色各且仅一张。
+根目录 `02-专业分镜表.md` 只用五列。schema v6 AI分镜必须使用采集配置ID、拍摄者、拍摄者入镜范围、设备可见性和校准角色；主配置至少覆盖一半，三种校准角色各且仅一张。
 
 运行 `register-storyboard --planned-count N` 后才创建正式图片任务。文字自审通过后设为 `awaiting_storyboard_approval` 并停止；收到明确批准后运行 `approve-storyboard --user-approved`，同时固化两张分镜表哈希。
 
@@ -179,9 +181,11 @@ python3 <skill-dir>/scripts/transport_guard.py reference-preflight \
 
 ## 7. 三张真实性校准与正式生图
 
-参考批准后进入 `calibration_self_review`。只允许生成普通基线、最差拍摄条件、首次重大异常三张正式分镜；其他图号预检必须失败。三张均通过结构化审查后运行 `python3 scripts/calibration_sheet.py --state <state>` 制作 `真实性校准联系表.jpg`，与质感锚点、采集配置和预期缺陷并列展示，运行 `submit-calibration` 并停止。用户批准后运行 `approve-calibration --user-approved`，三张保留为正式通过图，再生成其余图片。校准未通过可运行 `reopen-gate --gate calibration`重跑一次；第二次仍未批准进入 `needs_user`。
+参考批准后进入 `calibration_self_review`。只允许生成普通基线、最差拍摄条件、首次重大异常三张正式分镜；其他图号预检必须失败。三张均通过结构化审查后生成校准联系表并停止。用户批准后，三张保留为正式通过图，schema v6进入 `scene_generation`。
 
-- schema v5 `preflight` 必须同时提供 `--capture-id`、`--device-visibility`，每张参考提供同序 `--reference-role` 与 `--reference-kind identity|prop|location|capture_style`。
+其余原图只生成并登记候选路径，不查看图片、不验证画幅或内容。全部路径齐备后运行 `submit-originals-overview`，生成一张01–NN编号拼图；无法读取的图片显示编号占位格。随后停止于 `awaiting_first_review_decision`，由用户运行 `choose-first-review --mode full|selected|skip --user-approved` 选择全审、指定图号审查或跳过。
+
+- schema v5/v6 `preflight` 必须同时提供 `--capture-id`、`--device-visibility`，每张参考提供同序 `--reference-role` 与 `--reference-kind identity|prop|location|capture_style`。
 - authored prompt不得超过260字符或900字节；只写一个事件、一个受限机位、一至两种因果缺陷和最多四个关键排除项。固定反电影与参考安全条款由工具自动注入。
 
 - 每个独立场景单独调用一次内置 imagegen。
@@ -216,7 +220,7 @@ python3 <skill-dir>/scripts/transport_guard.py reference-preflight \
 - 新项目最多使用两张独立参考；三张以上先在分镜规划阶段缩减到必要的两张。自动恢复不删参考来源，只把两个逻辑来源合成一个物理附件。
 - `preflight` 返回物理附件数、逻辑来源数、参考种类与 `reference_summary.latency_risk`。两张独立参考或一个双来源参考板标记为 `elevated`；3 张及以上或总输入达到约 8 MiB 标记为 `high`。新建精确局部编辑请求时，只输入编辑目标和确实参与被改区域重建的参考图；身份、车辆或地点若已在编辑目标中清晰可见且只需保持不变，应写入提示词不变量，而不是重复上传。请求快照一旦固化，重试不得据此静默删图。
 - 新请求在硬限制之外再使用软预算：参考图优先最长边不超过约 1024 px，总输入尽量不超过约 1.5 MiB，并排除本镜不需要的人物和复杂背景。软预算用于降低视觉编码长尾，不是质量降级命令；身份敏感镜头不得直接改成零参考。
-- schema v5 authored prompt使用260字符/900字节硬预算；旧schema继续输出原有软预算诊断。任何schema的传输恢复都不得修改已固化提示词。
+- schema v5/v6 authored prompt使用260字符/900字节硬预算；旧schema继续输出原有软预算诊断。任何schema的传输恢复都不得修改已固化提示词。
 - 每条新正式提示词增加 `Scene-native text`：没有文字要求时写 `none required`；有文字时写明载体、逐字内容、语言和是否关键证据。允许实景招牌、文件、标签、设备读数、剧情合理的时间戳、虚构品牌和设备屏内 UI；禁止发布字幕、说明标题、水印、平台 UI 浮层、假相机 HUD、真实品牌名和 Logo。AI 分镜中的发布字幕不得自动复制进该字段。
 - 自动恢复单参考时由状态机调用 `scripts/optimize_reference.py`，只做全图缩放和压缩，不传 `--crop`：
 
@@ -331,7 +335,7 @@ python3 <skill-dir>/scripts/transport_guard.py batch-status \
 
 ```
 
-`batch-status` 只把当前阶段允许的任务列为可运行：`reference_self_review` 为参考任务、`scene_self_review` 为正式原图、`repairing` 为已批准返修。它同时报告在途、冷却、恢复事务、阻塞项及非阻断性后端健康告警。`preflight` 自动滚动批次；`batch-start` 仅为旧项目和人工诊断保留。
+`batch-status` 只把当前阶段允许的任务列为可运行：`reference_self_review` 为参考任务、schema v6的 `scene_generation`（旧schema的 `scene_self_review`）为正式原图、`repairing` 为已批准返修。它同时报告在途、冷却、恢复事务、阻塞项及非阻断性后端健康告警。`preflight` 自动滚动批次；`batch-start` 仅为旧项目和人工诊断保留。
 
 全部可运行任务结束且仍有 `transport_blocked` 时运行：
 
@@ -378,9 +382,9 @@ python3 <skill-dir>/scripts/subscription_image_bridge.py \
 
 该 bridge 使用新的临时 `codex exec` 和任务专属输出，可改善长对话回传与缓存串图，但仍使用 ChatGPT/Codex 订阅图片服务，不能保证消除服务端长尾。它必须使用 `--ephemeral`、忽略项目规则、低推理强度、固定输出路径和最多 2 张 `-i` 附件。失败仍按传输失败处理，但不得结束整个批次或队列。
 
-## 7. 自审、返修报告与统一返修
+## 7. 用户选择后的审查、返修报告与统一返修
 
-生成联系表，并逐张查看原图。按 [quality-checklist.md](quality-checklist.md) 分类问题：
+仅在用户选择全审或局部审查后查看相应原图。未选图片直接通过；跳过模式不执行内容审查。按 [quality-checklist.md](quality-checklist.md) 分类问题：
 
 - 影响拍摄事件或整体摄影语言：整图重生成。
 - 身份、空间和机位正确的局部瑕疵：编辑返修。
@@ -392,9 +396,9 @@ python3 <skill-dir>/scripts/subscription_image_bridge.py \
 
 返修生图仍必须经过传输预检，增加 `--repair-mode edit` 或 `--repair-mode regenerate`。脚本允许 `review_pending` 原候选进入一次返修，为其保存独立的 `08-系统文件/01-生成请求/NN-repair.json`；传输失败会恢复为 `review_pending`，不会丢失原候选。`edit` 的自动恢复始终保持编辑目标为第一张独立附件，并把目标与支持图分别按 1024/88、768/80 两档全图压缩，永不拼板或转成 regenerate。返修候选成功返回后，`record-success` 保留原始 `candidate`，并登记 `repair_count: 1`、`repair_mode` 和 `repair_file`。
 
-原图返回后立即审查：通过项运行 `mark-pass`；失败项运行 `queue-repair` 记录问题、建议方式和摄影红旗，但继续生成后续原图，不得立即返修。
+用户选择审查后：通过项运行 `mark-pass`；失败项运行 `queue-repair` 记录问题、建议方式和摄影红旗。不得在原图生成期间自动审查或立即返修。
 
-只有全部计划图号都有原始候选且完成首审后才能运行：
+只有用户选择的图片完成首审后才能运行：
 
 ```bash
 python3 <skill-dir>/scripts/review_state.py prepare-repair-report \
@@ -430,7 +434,7 @@ python3 <skill-dir>/scripts/review_state.py mark-pass \
   --review-file /project/08-系统文件/03-真实性审查/NN.json
 ```
 
-schema v5审查JSON逐项填写机位物理、计划外设备、采集配置、非电影化、身份、关键道具、连续性和缺陷因果。任一硬项失败都不设置 `final_source`；返修版本仍失败时自动进入 `needs_user`。历史候选审查保存在 `candidate_versions`，不得被清空。
+schema v5/v6审查JSON逐项填写机位物理、计划外设备、采集配置、非电影化、身份、关键道具、连续性和缺陷因果。任一硬项失败都不设置 `final_source`；返修版本仍失败时自动进入 `needs_user`。历史候选审查保存在 `candidate_versions`，不得被清空。
 
 ## 8. 发布
 
@@ -442,5 +446,20 @@ schema v5审查JSON逐项填写机位物理、计划外设备、采集配置、�
 4. 用 `package_release.py --state /project/08-系统文件/review-state.json` 生成 1080×1350 PNG 与联系表；v4 输出必须等于状态中的 `04-最终发布版-N图`，存在缺图或 manifest 不完整时脚本必须拒绝。
 5. 完成 `验收记录.md` 和 `自审记录.md`。
 6. 将状态设为 `complete` 后再次校验。
+
+## 8. 已完成项目的文字专修
+
+只修故事和字幕时，不重走生图门槛：
+
+```bash
+python3 scripts/review_state.py start-text-revision --state <review-state.json>
+# 只修故事、发布说明、AI分镜的发布字幕列
+python3 scripts/text_audit.py --story <01-故事脚本.md> --publication <03-发布文件说明.md> --storyboard <02-AI生成分镜.md>
+python3 scripts/review_state.py submit-text-revision --state <review-state.json>
+```
+
+`submit-text-revision` 会硬校验图号、空字幕、48字上限、两份字幕同步，并确认图片记录、参考资产、manifest与最终PNG的哈希没变。它还会报告公式句、统一句长、技术词来源和可能未回收的线索，但不自动改写。
+
+提交后停在 `awaiting_text_revision_approval`。用户批准后运行 `approve-text-revision --user-approved`；用户不满意时运行 `revert-text-revision`。
 
 内置工具持续失败时保留所有完成内容并报告；单图阻塞不妨碍其他独立分镜推进，但任何缺图都会阻止进入 `final_self_review` 和发布打包。

@@ -1,7 +1,7 @@
 {
   "name": "oh-my-folkstoryphoto",
-  "version": "5.0.0",
-  "description": "Create long-form Chinese folk-story photo carousels with an approved capture-realism plan, three-shot calibration, traceable evidence chains, and structured review.",
+  "version": "6.0.0",
+  "description": "Create capture-realistic Chinese folk-story carousels with human-sounding narration, three-shot calibration, evidence chains, and text-only post-completion revision.",
   "author": {
     "name": "isliuyx"
   },
@@ -15,8 +15,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "oh-my-FolkStoryPhoto",
-    "shortDescription": "先确认手机或旧DV真实性，再创作伪纪录图文",
-    "longDescription": "先确认拍摄者、主设备、辅助设备与因果画质，再依次确认故事、专业分镜、参考图和三张真实性校准；校准通过后生成具有长篇证据链、清晰发布字幕和结构化硬失败审查的手机或旧DV伪纪录图文。",
+    "shortDescription": "生成真实伪纪录图文，同时减少脚本与字幕的AI腔",
+    "longDescription": "先确认拍摄者、主设备、辅助设备与因果画质，再依次确认故事、专业分镜、参考图和三张真实性校准。v6新增声音卡、人物知识边界、连续三图字幕测试、只读文字审查和不触碰图片的完成后文字专修。",
     "developerName": "isliuyx",
     "category": "Creativity",
     "capabilities": [
@@ -29,6 +29,7 @@
       "使用 $oh-my-folkstoryphoto，把这个传说改编成真实手机或旧DV伪纪录图文。",
       "使用 $oh-my-folkstoryphoto，检查这个项目的视角物理、设备连续性和电影化漂移。",
       "使用 $oh-my-folkstoryphoto，预演并安全整理现有民间故事工作区。"
+      ,"使用 $oh-my-folkstoryphoto，只修改已完成项目的故事和字幕，不重新生图。"
     ]
   }
 }

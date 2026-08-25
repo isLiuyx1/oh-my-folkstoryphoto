@@ -16,6 +16,7 @@ SAFE_PHASES = {
     "awaiting_plan_approval",
     "awaiting_reference_approval",
     "awaiting_repair_approval",
+    "awaiting_text_revision_approval",
     "complete",
     "needs_user",
 }
@@ -28,6 +29,7 @@ BLOCKING_PHASES = {
     "scene_self_review",
     "repairing",
     "final_self_review",
+    "text_revision_self_review",
 }
 
 

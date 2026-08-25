@@ -56,9 +56,11 @@ class PublicationCaptionPolicyTests(unittest.TestCase):
                 self.assertEqual(numbers, [1])
                 self.assertEqual(header, review_state.PRODUCTION_STORYBOARD_COLUMNS)
 
-    def test_too_short_or_too_long_caption_is_rejected(self) -> None:
-        with self.assertRaisesRegex(review_state.StateError, "at least 8"):
-            review_state.parse_production_storyboard(self.write_storyboard("洞里有响声"))
+    def test_short_caption_is_accepted_and_too_long_caption_is_rejected(self) -> None:
+        numbers, _header = review_state.parse_production_storyboard(
+            self.write_storyboard("跑")
+        )
+        self.assertEqual(numbers, [1])
         with self.assertRaisesRegex(review_state.StateError, "at most 48"):
             review_state.parse_production_storyboard(self.write_storyboard("我" * 49))
 
@@ -84,7 +86,7 @@ class PublicationCaptionPolicyTests(unittest.TestCase):
         self.assertEqual(numbers, [1])
         self.assertEqual(header, review_state.LEGACY_PRODUCTION_STORYBOARD_COLUMNS)
 
-    def test_skill_documents_define_independent_reading_test(self) -> None:
+    def test_skill_documents_define_continuous_three_frame_test(self) -> None:
         skill = (ROOT / "skills" / "oh-my-folkstoryphoto" / "SKILL.md").read_text(
             encoding="utf-8"
         )
@@ -92,10 +94,10 @@ class PublicationCaptionPolicyTests(unittest.TestCase):
             ROOT / "skills" / "oh-my-folkstoryphoto" / "references" / "visual-language.md"
         ).read_text(encoding="utf-8")
         for phrase in (
-            "独立阅读测试",
-            "具体主语或对象＋具体动作或变化＋本图新信息",
+            "连续三图测试",
+            "多数建议4–28字",
             "空洞悬念",
-            "8–48 个可见字符",
+            "不超过48个可见字符",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill + visual)

@@ -55,8 +55,8 @@ def load_anchor_manifest() -> dict[str, dict[str, Any]]:
 def render(state_path: Path) -> Path:
     summary = review_state.validate_state(state_path)
     payload = review_state.load_json(state_path)
-    if payload.get("schema_version") != 5 or payload.get("phase") != "calibration_self_review":
-        raise review_state.StateError("calibration sheet requires schema v5 calibration_self_review")
+    if payload.get("schema_version") not in {5, 6} or payload.get("phase") != "calibration_self_review":
+        raise review_state.StateError("calibration sheet requires schema v5/v6 calibration_self_review")
     project_dir = Path(summary["project_dir"])
     plan = authenticity.parse_realism_plan(review_state.artifact_path(project_dir, payload, "realism_plan"))
     captures = authenticity.capture_map(plan)

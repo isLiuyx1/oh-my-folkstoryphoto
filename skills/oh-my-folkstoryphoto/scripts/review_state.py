@@ -33,10 +33,14 @@ PHASES = {
     "awaiting_reference_approval",
     "calibration_self_review",
     "awaiting_calibration_approval",
+    "scene_generation",
+    "awaiting_first_review_decision",
     "scene_self_review",
     "awaiting_repair_approval",
     "repairing",
     "final_self_review",
+    "text_revision_self_review",
+    "awaiting_text_revision_approval",
     "complete",
     "needs_user",
 }
@@ -45,11 +49,12 @@ V2_STATUSES = {
     "pending",
     "generating",
     "transport_blocked",
+    "candidate_ready",
     "review_pending",
     "pass",
     "needs_user",
 }
-SUPPORTED_SCHEMAS = {1, 2, 3, 4, 5}
+SUPPORTED_SCHEMAS = {1, 2, 3, 4, 5, 6}
 FINAL_PHASES = {"final_self_review", "complete"}
 REQUIRED_COMPLETE_ARTIFACTS = ("self_review", "acceptance", "release_manifest")
 REFERENCE_BOARD_TIMEOUT_SECONDS = 480
@@ -71,7 +76,9 @@ LEGAL_TRANSITIONS = {
         "needs_user",
     },
     "calibration_self_review": {"awaiting_calibration_approval", "reference_self_review", "needs_user"},
-    "awaiting_calibration_approval": {"calibration_self_review", "scene_self_review", "needs_user"},
+    "awaiting_calibration_approval": {"calibration_self_review", "scene_self_review", "scene_generation", "needs_user"},
+    "scene_generation": {"awaiting_first_review_decision", "needs_user"},
+    "awaiting_first_review_decision": {"scene_self_review", "final_self_review", "needs_user"},
     "scene_self_review": {
         "awaiting_repair_approval",
         "final_self_review",
@@ -80,7 +87,9 @@ LEGAL_TRANSITIONS = {
     "awaiting_repair_approval": {"repairing", "scene_self_review", "needs_user"},
     "repairing": {"awaiting_repair_approval", "final_self_review", "needs_user"},
     "final_self_review": {"repairing", "complete", "needs_user"},
-    "complete": set(),
+    "text_revision_self_review": {"awaiting_text_revision_approval"},
+    "awaiting_text_revision_approval": {"text_revision_self_review", "complete"},
+    "complete": {"text_revision_self_review"},
     "needs_user": {
         "realism_self_review",
         "drafting",
@@ -143,6 +152,11 @@ V5_ARTIFACTS = {
     "authenticity_reviews_dir": "08-系统文件/03-真实性审查",
 }
 
+V6_ARTIFACTS = {
+    **V5_ARTIFACTS,
+    "originals_overview": "06-生成过程/03-当前总览/首轮原图总览.jpg",
+}
+
 PUBLIC_STORYBOARD_COLUMNS = (
     "图号",
     "画面拍什么",
@@ -194,7 +208,6 @@ V5_PRODUCTION_STORYBOARD_COLUMNS = (
     "校准角色",
     "真实性风险",
 )
-MIN_PUBLICATION_CAPTION_CHARS = 8
 MAX_PUBLICATION_CAPTION_CHARS = 48
 VAGUE_PUBLICATION_CAPTION_PATTERNS = (
     re.compile(r"^(?:我|我们)?(?:看见|看到|发现)(?:了)?(?:一个|一些)?(?:奇怪|诡异|可怕|无法解释)的?(?:东西|景象|事情)$"),
@@ -308,6 +321,8 @@ def artifact_relative(payload: dict[str, Any], key: str, legacy: str | None = No
         return V4_ARTIFACTS[key]
     if payload.get("schema_version") == 5 and key in V5_ARTIFACTS:
         return V5_ARTIFACTS[key]
+    if payload.get("schema_version") == 6 and key in V6_ARTIFACTS:
+        return V6_ARTIFACTS[key]
     if legacy is not None:
         return legacy
     raise StateError(f"artifacts.{key} is required")
@@ -328,7 +343,7 @@ def requests_root(project_dir: Path) -> Path:
     v4_state = project_dir / V4_ARTIFACTS["system_dir"] / "review-state.json"
     if v4_state.is_file():
         payload = load_json(v4_state)
-        if payload.get("schema_version") in {4, 5}:
+        if payload.get("schema_version") in {4, 5, 6}:
             return artifact_path(project_dir, payload, "requests_dir")
     return project_dir / "生成请求"
 
@@ -401,11 +416,8 @@ def validate_publication_caption(caption: str, number: int) -> None:
             "subject or object and the event shown by this frame"
         )
     length = len(visible)
-    if length < MIN_PUBLICATION_CAPTION_CHARS:
-        raise StateError(
-            f"AI storyboard image {number} publication caption must contain at least "
-            f"{MIN_PUBLICATION_CAPTION_CHARS} visible characters"
-        )
+    if length == 0:
+        raise StateError(f"AI storyboard image {number} publication caption must not be empty")
     if length > MAX_PUBLICATION_CAPTION_CHARS:
         raise StateError(
             f"AI storyboard image {number} publication caption must contain at most "
@@ -546,12 +558,13 @@ def validate_candidate_files(
     repair_count: int,
     *,
     candidate_required: bool,
+    allow_missing: bool = False,
 ) -> Path | None:
     candidate_raw = item.get("candidate")
     candidate: Path | None = None
     if candidate_raw is not None:
         candidate = resolve_project_path(project_dir, candidate_raw, f"{prefix}.candidate")
-        if not candidate.is_file():
+        if not allow_missing and not candidate.is_file():
             raise StateError(f"{prefix}.candidate does not exist: {candidate}")
     elif candidate_required:
         raise StateError(f"{prefix}.candidate is required for status {status}")
@@ -562,7 +575,7 @@ def validate_candidate_files(
         final_source = resolve_project_path(
             project_dir, final_source_raw, f"{prefix}.final_source"
         )
-        if not final_source.is_file():
+        if not allow_missing and not final_source.is_file():
             raise StateError(f"{prefix}.final_source does not exist: {final_source}")
     elif final_source_raw is not None:
         raise StateError(f"{prefix}.final_source must be null unless status is pass")
@@ -572,7 +585,7 @@ def validate_candidate_files(
         repair_file = resolve_project_path(
             project_dir, repair_file_raw, f"{prefix}.repair_file"
         )
-        if not repair_file.is_file():
+        if not allow_missing and not repair_file.is_file():
             raise StateError(f"{prefix}.repair_file does not exist: {repair_file}")
     elif repair_file_raw is not None:
         raise StateError(f"{prefix}.repair_file requires repair_count 1")
@@ -904,6 +917,7 @@ def validate_v2(state_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
             status,
             repair_count,
             candidate_required=status in {"review_pending", "pass", "needs_user"},
+            allow_missing=bool(payload.get("_v6_relaxed_files")),
         )
         validate_transport(item.get("transport"), prefix)
         transport = item["transport"]
@@ -1113,6 +1127,10 @@ def validate_v5(state_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     phase, project_dir, artifacts, images, blocking_reasons = validate_common(
         state_path, payload
     )
+    if not payload.get("_v6_allow_unreviewed_pass") and any(
+        item.get("status") == "candidate_ready" for item in images
+    ):
+        raise StateError("schema v5 does not support candidate_ready")
     expected_state = project_dir / V5_ARTIFACTS["system_dir"] / "review-state.json"
     if state_path.resolve() != expected_state.resolve():
         raise StateError(f"schema v5 state must be stored at {expected_state}")
@@ -1181,7 +1199,7 @@ def validate_v5(state_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
             versions = item.get("candidate_versions")
             if not isinstance(versions, list):
                 raise StateError(f"images[{index}].candidate_versions must be an array")
-            if item.get("status") == "pass":
+            if item.get("status") == "pass" and not payload.get("_v6_allow_unreviewed_pass"):
                 if not versions or not isinstance(versions[-1].get("review"), dict):
                     raise StateError(f"images[{index}].pass requires a structured current-version review")
                 failures = authenticity.hard_failures(versions[-1]["review"])
@@ -1249,6 +1267,144 @@ def validate_v5(state_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     validate_final_requirements(phase, normalized, artifacts, project_dir, blocking_reasons)
     validate_manifest(project_dir, artifacts, normalized, phase)
     return summary(state_path, project_dir, phase, normalized, blocking_reasons, 5)
+
+
+TEXT_REVISION_KEYS = ("story", "publication", "ai_storyboard")
+
+
+def json_digest(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def tree_hashes(root: Path) -> dict[str, str]:
+    if not root.exists():
+        return {}
+    return {
+        str(path.relative_to(root)): sha256_file(path)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def text_revision_preservation(project_dir: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    artifacts = payload.get("artifacts", {})
+    release_manifest = artifact_path(project_dir, payload, "release_manifest")
+    release_dir = resolve_project_path(project_dir, artifacts.get("release_dir"), "artifacts.release_dir")
+    references_dir = artifact_path(project_dir, payload, "references_dir")
+    return {
+        "images_state_sha256": json_digest(payload.get("images", [])),
+        "reference_jobs_sha256": json_digest(payload.get("reference_jobs", [])),
+        "release_manifest_sha256": sha256_file(release_manifest),
+        "release_files": tree_hashes(release_dir),
+        "reference_files": tree_hashes(references_dir),
+    }
+
+
+def mask_storyboard_captions(text: str) -> str:
+    lines: list[str] = []
+    header: tuple[str, ...] | None = None
+    caption_index: int | None = None
+    table_row_index = 0
+    for line in text.splitlines(keepends=True):
+        if line.strip().startswith("|"):
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if table_row_index == 0:
+                header = tuple(cells)
+                caption_index = header.index("发布字幕") if "发布字幕" in header else None
+            elif table_row_index >= 2 and caption_index is not None and len(cells) == len(header or ()):
+                cells[caption_index] = "<PUBLICATION_CAPTION>"
+                newline = "\n" if line.endswith("\n") else ""
+                line = "| " + " | ".join(cells) + " |" + newline
+            table_row_index += 1
+        lines.append(line)
+    return "".join(lines)
+
+
+def validate_active_text_revision(state_path: Path, payload: dict[str, Any]) -> None:
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    revision = payload.get("text_revision")
+    if not isinstance(revision, dict) or revision.get("status") != "active":
+        raise StateError("text revision phase requires an active text_revision record")
+    backup_dir = resolve_project_path(project_dir, revision.get("backup_dir"), "text_revision.backup_dir")
+    base = revision.get("base")
+    if not isinstance(base, dict):
+        raise StateError("text_revision.base must be an object")
+    for key in TEXT_REVISION_KEYS:
+        record = base.get(key)
+        if not isinstance(record, dict):
+            raise StateError(f"text_revision.base.{key} must be an object")
+        backup = backup_dir / record.get("backup_name", "")
+        if not backup.is_file() or sha256_file(backup) != record.get("sha256"):
+            raise StateError(f"text revision backup is missing or changed: {key}")
+    current = text_revision_preservation(project_dir, payload)
+    if current != revision.get("preservation"):
+        raise StateError("text revision changed protected image, reference, manifest, or release data")
+    base_storyboard = backup_dir / base["ai_storyboard"]["backup_name"]
+    current_storyboard = artifact_path(project_dir, payload, "ai_storyboard")
+    if mask_storyboard_captions(base_storyboard.read_text(encoding="utf-8")) != mask_storyboard_captions(
+        current_storyboard.read_text(encoding="utf-8")
+    ):
+        raise StateError("text revision may change only the publication-caption column in the AI storyboard")
+    if payload.get("phase") == "awaiting_text_revision_approval":
+        draft = revision.get("draft")
+        if not isinstance(draft, dict):
+            raise StateError("awaiting text revision approval requires draft hashes")
+        for key in TEXT_REVISION_KEYS:
+            path = artifact_path(project_dir, payload, key)
+            if draft.get(key, {}).get("sha256") != sha256_file(path):
+                raise StateError("submitted text changed; return to text_revision_self_review")
+
+
+def validate_v6(state_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate schema v6 while preserving the v5 authenticity contract."""
+    compatibility = copy.deepcopy(payload)
+    compatibility["schema_version"] = 5
+    compatibility["_v6_allow_unreviewed_pass"] = True
+    compatibility["_v6_relaxed_files"] = True
+    for item in compatibility.get("images", []):
+        if item.get("status") == "candidate_ready":
+            item["status"] = "review_pending"
+    if compatibility.get("phase") in {
+        "scene_generation", "awaiting_first_review_decision", "final_self_review"
+    }:
+        compatibility["phase"] = "scene_self_review"
+    if compatibility.get("phase") in {"text_revision_self_review", "awaiting_text_revision_approval"}:
+        project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+        compatibility["phase"] = "complete"
+        compatibility.setdefault("approvals", {})["story"] = approval_record(
+            artifact_path(project_dir, payload, "story")
+        )
+        compatibility.setdefault("approvals", {}).setdefault("storyboard", {})["production"] = approval_record(
+            artifact_path(project_dir, payload, "ai_storyboard")
+        )
+    result = validate_v5(state_path, compatibility)
+    if payload.get("phase") in {"text_revision_self_review", "awaiting_text_revision_approval"}:
+        validate_active_text_revision(state_path, payload)
+    if payload.get("phase") in FINAL_PHASES:
+        non_passing = [
+            item["number"] for item in payload.get("images", [])
+            if item.get("status") != "pass"
+        ]
+        if non_passing:
+            raise StateError(
+                f"{payload.get('phase')} requires every image to pass; failing numbers: {non_passing}"
+            )
+    if payload.get("phase") == "complete":
+        project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+        validate_manifest(project_dir, payload.get("artifacts", {}), [
+            {
+                "number": item["number"],
+                "status": item["status"],
+                "final_source": resolve_project_path(
+                    project_dir, item.get("final_source"), "final_source"
+                ) if item.get("final_source") else None,
+            }
+            for item in payload.get("images", [])
+        ], "complete")
+    result["schema_version"] = 6
+    result["phase"] = payload.get("phase")
+    return result
 
 
 def validate_numbering(normalized: list[dict[str, Any]], planned_count: int) -> None:
@@ -1324,7 +1480,9 @@ def validate_state(state_path: Path) -> dict[str, Any]:
         return validate_v4(state_path, payload)
     if version == 5:
         return validate_v5(state_path, payload)
-    raise StateError("schema_version must equal 1, 2, 3, 4 or 5")
+    if version == 6:
+        return validate_v6(state_path, payload)
+    raise StateError("schema_version must equal 1, 2, 3, 4, 5 or 6")
 
 
 def empty_transport() -> dict[str, Any]:
@@ -1381,26 +1539,26 @@ def empty_image_v5(number: int) -> dict[str, Any]:
 
 
 def init_project(project_dir: Path, schema_version: int = 5) -> dict[str, Any]:
-    if schema_version not in {4, 5}:
-        raise StateError("init-project schema_version must be 4 or 5")
+    if schema_version not in {4, 5, 6}:
+        raise StateError("init-project schema_version must be 4, 5 or 6")
     project_dir = project_dir.expanduser().resolve()
     if project_dir.exists() and any(project_dir.iterdir()):
         raise StateError(f"project directory is not empty: {project_dir}")
     project_dir.mkdir(parents=True, exist_ok=True)
-    artifacts = V5_ARTIFACTS if schema_version == 5 else V4_ARTIFACTS
+    artifacts = V6_ARTIFACTS if schema_version == 6 else V5_ARTIFACTS if schema_version == 5 else V4_ARTIFACTS
     story = project_dir / artifacts["story"]
     realism = project_dir / artifacts.get("realism_plan", "00-真实性方案.md")
     system_dir = project_dir / artifacts["system_dir"]
     system_dir.mkdir(parents=True, exist_ok=True)
     if schema_version == 4 and not story.exists():
         atomic_write_text(story, "# 故事脚本\n")
-    if schema_version == 5:
+    if schema_version in {5, 6}:
         atomic_write_text(realism, authenticity.realism_template())
     state_path = system_dir / "review-state.json"
     payload = {
         "schema_version": schema_version,
         "project_dir": "..",
-        "phase": "realism_self_review" if schema_version == 5 else "drafting",
+        "phase": "realism_self_review" if schema_version in {5, 6} else "drafting",
         "planned_count": None,
         "max_repairs_per_item": 1,
         "repair_policy": {
@@ -1424,7 +1582,7 @@ def init_project(project_dir: Path, schema_version: int = 5) -> dict[str, Any]:
     atomic_write_json(state_path, payload)
     result = validate_state(state_path)
     response = {"command": "init-project", **result}
-    if schema_version == 5:
+    if schema_version in {5, 6}:
         response["realism_file"] = str(realism)
     else:
         response["story_file"] = str(story)
@@ -1435,8 +1593,8 @@ def approve_realism(state_path: Path, user_approved: bool) -> dict[str, Any]:
     if not user_approved:
         raise StateError("approve-realism requires explicit --user-approved")
     payload = load_json(state_path)
-    if payload.get("schema_version") != 5:
-        raise StateError("approve-realism is only available for schema v5")
+    if payload.get("schema_version") not in {5, 6}:
+        raise StateError("approve-realism is only available for schema v5/v6")
     if payload.get("phase") != "awaiting_realism_approval":
         raise StateError("realism may only be approved in awaiting_realism_approval")
     project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
@@ -1461,8 +1619,8 @@ def approve_story(state_path: Path, user_approved: bool) -> dict[str, Any]:
     if not user_approved:
         raise StateError("approve-story requires explicit --user-approved")
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {4, 5}:
-        raise StateError("approve-story is only available for schema v4/v5")
+    if payload.get("schema_version") not in {4, 5, 6}:
+        raise StateError("approve-story is only available for schema v4/v5/v6")
     if payload.get("phase") != "awaiting_story_approval":
         raise StateError("story may only be approved in awaiting_story_approval")
     project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
@@ -1478,7 +1636,7 @@ def approve_story(state_path: Path, user_approved: bool) -> dict[str, Any]:
 
 def register_storyboard(state_path: Path, planned_count: int) -> dict[str, Any]:
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {4, 5}:
+    if payload.get("schema_version") not in {4, 5, 6}:
         raise StateError("register-storyboard is only available for schema v4/v5")
     if payload.get("phase") != "plan_self_review":
         raise StateError("storyboard may only be registered in plan_self_review")
@@ -1495,7 +1653,7 @@ def register_storyboard(state_path: Path, planned_count: int) -> dict[str, Any]:
     if production_numbers != numbers:
         raise StateError("AI production storyboard must contain the same ordered image numbers")
     payload["planned_count"] = planned_count
-    if payload.get("schema_version") == 5:
+    if payload.get("schema_version") in {5, 6}:
         if header != V5_PRODUCTION_STORYBOARD_COLUMNS:
             raise StateError("schema v5 requires the exact v5 AI production storyboard")
         try:
@@ -1521,7 +1679,7 @@ def approve_storyboard(state_path: Path, user_approved: bool) -> dict[str, Any]:
     if not user_approved:
         raise StateError("approve-storyboard requires explicit --user-approved")
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {4, 5}:
+    if payload.get("schema_version") not in {4, 5, 6}:
         raise StateError("approve-storyboard is only available for schema v4/v5")
     if payload.get("phase") != "awaiting_storyboard_approval":
         raise StateError("storyboard may only be approved in awaiting_storyboard_approval")
@@ -1551,7 +1709,7 @@ def approve_references(state_path: Path, user_approved: bool) -> dict[str, Any]:
     if not user_approved:
         raise StateError("approve-references requires explicit --user-approved")
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {4, 5}:
+    if payload.get("schema_version") not in {4, 5, 6}:
         raise StateError("approve-references is only available for schema v4/v5")
     if payload.get("phase") != "awaiting_reference_approval":
         raise StateError("references may only be approved in awaiting_reference_approval")
@@ -1580,7 +1738,7 @@ def approve_references(state_path: Path, user_approved: bool) -> dict[str, Any]:
         "assets": assets,
     }
     payload["phase"] = (
-        "calibration_self_review" if payload.get("schema_version") == 5
+        "calibration_self_review" if payload.get("schema_version") in {5, 6}
         else "scene_self_review"
     )
     atomic_write_json(state_path, payload)
@@ -1594,8 +1752,8 @@ def approve_references(state_path: Path, user_approved: bool) -> dict[str, Any]:
 
 def submit_calibration(state_path: Path, contact_sheet: Path) -> dict[str, Any]:
     payload = load_json(state_path)
-    if payload.get("schema_version") != 5:
-        raise StateError("submit-calibration is only available for schema v5")
+    if payload.get("schema_version") not in {5, 6}:
+        raise StateError("submit-calibration is only available for schema v5/v6")
     if payload.get("phase") != "calibration_self_review":
         raise StateError("calibration may only be submitted in calibration_self_review")
     project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
@@ -1633,15 +1791,15 @@ def approve_calibration(state_path: Path, user_approved: bool) -> dict[str, Any]
     if not user_approved:
         raise StateError("approve-calibration requires explicit --user-approved")
     payload = load_json(state_path)
-    if payload.get("schema_version") != 5:
-        raise StateError("approve-calibration is only available for schema v5")
+    if payload.get("schema_version") not in {5, 6}:
+        raise StateError("approve-calibration is only available for schema v5/v6")
     if payload.get("phase") != "awaiting_calibration_approval":
         raise StateError("calibration may only be approved in awaiting_calibration_approval")
     submission = payload.get("calibration_submission")
     if not isinstance(submission, dict):
         raise StateError("calibration submission is missing")
     payload.setdefault("approvals", {})["calibration"] = copy.deepcopy(submission)
-    payload["phase"] = "scene_self_review"
+    payload["phase"] = "scene_generation" if payload.get("schema_version") == 6 else "scene_self_review"
     atomic_write_json(state_path, payload)
     validate_state(state_path)
     return {
@@ -1651,12 +1809,139 @@ def approve_calibration(state_path: Path, user_approved: bool) -> dict[str, Any]
     }
 
 
+def start_text_revision(state_path: Path) -> dict[str, Any]:
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 6 or payload.get("phase") != "complete":
+        raise StateError("start-text-revision requires a completed schema-v6 project")
+    validate_state(state_path)
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_dir = artifact_path(project_dir, payload, "backups_dir") / f"text-revision-{stamp}"
+    if backup_dir.exists():
+        raise StateError(f"text revision backup already exists: {backup_dir}")
+    backup_dir.mkdir(parents=True)
+    base: dict[str, Any] = {}
+    for key in TEXT_REVISION_KEYS:
+        source = artifact_path(project_dir, payload, key)
+        backup_name = source.name
+        shutil.copy2(source, backup_dir / backup_name)
+        base[key] = {
+            "path": str(source.relative_to(project_dir)),
+            "backup_name": backup_name,
+            "sha256": sha256_file(source),
+        }
+    shutil.copy2(state_path, backup_dir / "review-state.json")
+    payload["text_revision"] = {
+        "status": "active",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "backup_dir": str(backup_dir.relative_to(project_dir)),
+        "base": base,
+        "preservation": text_revision_preservation(project_dir, payload),
+        "draft": None,
+    }
+    payload["phase"] = "text_revision_self_review"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {"command": "start-text-revision", "phase": payload["phase"], "backup": str(backup_dir)}
+
+
+def submit_text_revision(state_path: Path) -> dict[str, Any]:
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 6 or payload.get("phase") != "text_revision_self_review":
+        raise StateError("submit-text-revision requires text_revision_self_review")
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    try:
+        import text_audit
+        audit = text_audit.audit_files(
+            artifact_path(project_dir, payload, "story"),
+            artifact_path(project_dir, payload, "publication"),
+            artifact_path(project_dir, payload, "ai_storyboard"),
+        )
+    except (OSError, ValueError) as exc:
+        raise StateError(str(exc)) from exc
+    if audit["hard_errors"]:
+        raise StateError("text audit hard errors: " + "; ".join(audit["hard_errors"]))
+    validate_active_text_revision(state_path, payload)
+    revision = payload["text_revision"]
+    revision["draft"] = {
+        key: {
+            "path": artifact_relative(payload, key),
+            "sha256": sha256_file(artifact_path(project_dir, payload, key)),
+        }
+        for key in TEXT_REVISION_KEYS
+    }
+    revision["audit"] = audit
+    revision["submitted_at"] = datetime.now(timezone.utc).isoformat()
+    payload["phase"] = "awaiting_text_revision_approval"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {
+        "command": "submit-text-revision",
+        "phase": payload["phase"],
+        "warning_count": len(audit["warnings"]),
+    }
+
+
+def approve_text_revision(state_path: Path, user_approved: bool) -> dict[str, Any]:
+    if not user_approved:
+        raise StateError("approve-text-revision requires explicit --user-approved")
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 6 or payload.get("phase") != "awaiting_text_revision_approval":
+        raise StateError("approve-text-revision requires awaiting_text_revision_approval")
+    validate_state(state_path)
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    revision = payload["text_revision"]
+    approved_at = datetime.now(timezone.utc).isoformat()
+    approved = copy.deepcopy(revision["draft"])
+    for record in approved.values():
+        record["approved_at"] = approved_at
+    payload.setdefault("approvals", {})["story"] = approved["story"]
+    payload.setdefault("approvals", {}).setdefault("storyboard", {})["production"] = approved["ai_storyboard"]
+    payload.setdefault("approvals", {})["text_revision"] = {
+        "base": copy.deepcopy(revision["base"]),
+        "approved": approved,
+        "approved_at": approved_at,
+    }
+    history = payload.setdefault("text_revision_history", [])
+    finished = copy.deepcopy(revision)
+    finished.update({"status": "approved", "approved_at": approved_at})
+    history.append(finished)
+    payload["text_revision"] = None
+    payload["phase"] = "complete"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {
+        "command": "approve-text-revision",
+        "phase": "complete",
+        "approved": approved,
+    }
+
+
+def revert_text_revision(state_path: Path) -> dict[str, Any]:
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 6 or payload.get("phase") not in {
+        "text_revision_self_review", "awaiting_text_revision_approval"
+    }:
+        raise StateError("revert-text-revision requires an active text revision")
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    revision = payload.get("text_revision", {})
+    backup_dir = resolve_project_path(project_dir, revision.get("backup_dir"), "text_revision.backup_dir")
+    base = revision.get("base", {})
+    for key in TEXT_REVISION_KEYS:
+        record = base.get(key, {})
+        shutil.copy2(backup_dir / record.get("backup_name", ""), artifact_path(project_dir, payload, key))
+    original_state = load_json(backup_dir / "review-state.json")
+    atomic_write_json(state_path, original_state)
+    validate_state(state_path)
+    return {"command": "revert-text-revision", "phase": "complete", "backup": str(backup_dir)}
+
+
 def reopen_gate(state_path: Path, gate: str) -> dict[str, Any]:
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {4, 5}:
+    if payload.get("schema_version") not in {4, 5, 6}:
         raise StateError("reopen-gate is only available for schema v4/v5")
     allowed_gates = {"story", "storyboard"} | (
-        {"realism", "calibration"} if payload.get("schema_version") == 5 else set()
+        {"realism", "calibration"} if payload.get("schema_version") in {5, 6} else set()
     )
     if gate not in allowed_gates:
         raise StateError("invalid gate for this schema")
@@ -1743,7 +2028,7 @@ def reopen_gate(state_path: Path, gate: str) -> dict[str, Any]:
     payload["transport_batch"] = None
     payload["transport_backends"] = {}
     payload["artifacts"]["release_dir"] = (
-        V5_ARTIFACTS["release_dir"] if payload.get("schema_version") == 5
+        V5_ARTIFACTS["release_dir"] if payload.get("schema_version") in {5, 6}
         else V4_ARTIFACTS["release_dir"]
     )
     atomic_write_json(state_path, payload)
@@ -1758,8 +2043,8 @@ def reopen_gate(state_path: Path, gate: str) -> dict[str, Any]:
 
 def require_writable_state(payload: dict[str, Any], command: str) -> int:
     version = payload.get("schema_version")
-    if version not in {2, 3, 4, 5}:
-        raise StateError(f"{command} requires schema_version 2, 3, 4 or 5")
+    if version not in {2, 3, 4, 5, 6}:
+        raise StateError(f"{command} requires schema_version 2, 3, 4, 5 or 6")
     if version == 2 and payload.get("phase") == "complete":
         raise StateError("completed schema v2 projects are read-only")
     return int(version)
@@ -1793,7 +2078,7 @@ def register_reference_job(
         "notes": "",
         "transport": empty_transport(),
     }
-    if version in {3, 4, 5}:
+    if version in {3, 4, 5, 6}:
         job.update(
             {
                 "candidate_versions": [],
@@ -1813,7 +2098,7 @@ def mark_reference_pass(
 ) -> dict[str, Any]:
     payload = load_json(state_path)
     version = require_writable_state(payload, "mark-reference-pass")
-    if version in {3, 4, 5}:
+    if version in {3, 4, 5, 6}:
         result = record_reference_review(
             state_path, reference_id, "pass", [], notes
         )
@@ -1851,7 +2136,7 @@ def record_reference_review(
     notes: str,
 ) -> dict[str, Any]:
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {3, 4, 5}:
+    if payload.get("schema_version") not in {3, 4, 5, 6}:
         raise StateError("record-reference-review requires schema_version 3, 4 or 5")
     if payload.get("phase") != "reference_self_review":
         raise StateError("reference review requires phase reference_self_review")
@@ -2107,7 +2392,7 @@ def mark_pass(
         raise StateError(f"image {number} is not present in planned images")
     if item.get("status") != "review_pending":
         raise StateError(f"image {number} must be review_pending before mark-pass")
-    if payload.get("schema_version") == 5:
+    if payload.get("schema_version") in {5, 6}:
         if review_file is None:
             raise StateError("schema v5 mark-pass requires --review-file")
         project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
@@ -2143,7 +2428,7 @@ def mark_pass(
                     payload["blocking_reasons"].append(reason)
                 payload["phase"] = "needs_user"
             elif (
-                payload.get("schema_version") == 5
+                payload.get("schema_version") in {5, 6}
                 and payload.get("phase") == "calibration_self_review"
                 and payload.get("calibration_round", 0) >= 1
                 and number in payload.get("calibration_numbers", [])
@@ -2347,14 +2632,86 @@ def authorize_repairs(
     }
 
 
+def submit_originals_overview(state_path: Path) -> dict[str, Any]:
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 6:
+        raise StateError("submit-originals-overview is only available for schema v6")
+    if payload.get("phase") != "scene_generation":
+        raise StateError("originals overview may only be submitted in scene_generation")
+    missing = [item["number"] for item in payload["images"] if not item.get("candidate")]
+    if missing:
+        raise StateError(f"all original candidate paths are required before overview: {missing}")
+    unfinished = [
+        item["number"] for item in payload["images"]
+        if item.get("status") not in {"pass", "candidate_ready"}
+    ]
+    if unfinished:
+        raise StateError(f"all original generations must finish before overview: {unfinished}")
+    project_dir = resolve_project_dir(state_path, payload.get("project_dir"))
+    output = artifact_path(project_dir, payload, "originals_overview")
+    from originals_overview import render_overview
+    render_overview(payload, project_dir, output)
+    payload["phase"] = "awaiting_first_review_decision"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {
+        "command": "submit-originals-overview",
+        "phase": payload["phase"],
+        "overview": str(output),
+    }
+
+
+def choose_first_review(
+    state_path: Path, mode: str, numbers: list[int], user_approved: bool
+) -> dict[str, Any]:
+    if not user_approved:
+        raise StateError("choose-first-review requires explicit --user-approved")
+    payload = load_json(state_path)
+    if payload.get("schema_version") != 6:
+        raise StateError("choose-first-review is only available for schema v6")
+    if payload.get("phase") != "awaiting_first_review_decision":
+        raise StateError("first review may only be chosen after originals overview")
+    calibration = set(payload.get("calibration_numbers", []))
+    originals = {item["number"] for item in payload["images"] if item["number"] not in calibration}
+    selected = set(numbers)
+    if mode == "selected":
+        if not selected or not selected.issubset(originals):
+            raise StateError("selected review numbers must be non-calibration originals")
+    elif selected:
+        raise StateError("--number is only valid with --mode selected")
+    review_numbers = originals if mode == "full" else selected if mode == "selected" else set()
+    for item in payload["images"]:
+        if item["number"] in calibration:
+            continue
+        if item.get("status") != "candidate_ready" or not item.get("candidate"):
+            raise StateError(f"image {item['number']} is not ready for first-review choice")
+        if item["number"] in review_numbers:
+            item["status"] = "review_pending"
+        else:
+            item["status"] = "pass"
+            item["final_source"] = item["candidate"]
+            item["hard_failures"] = []
+            item["photo_red_flags"] = []
+            item["notes"] = ""
+    payload["phase"] = "scene_self_review" if review_numbers else "final_self_review"
+    atomic_write_json(state_path, payload)
+    validate_state(state_path)
+    return {
+        "command": "choose-first-review",
+        "mode": mode,
+        "review_numbers": sorted(review_numbers),
+        "phase": payload["phase"],
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     initialize = subparsers.add_parser(
-        "init-project", help="Create one clean schema-v5 project and its realism-stage state"
+        "init-project", help="Create one clean schema-v6 project and its realism-stage state"
     )
     initialize.add_argument("--project-dir", required=True, type=Path)
-    initialize.add_argument("--schema-version", type=int, choices=(4, 5), default=5)
+    initialize.add_argument("--schema-version", type=int, choices=(4, 5, 6), default=6)
     validate = subparsers.add_parser("validate", help="Validate a review-state file")
     validate.add_argument("--state", required=True, type=Path)
     transition = subparsers.add_parser(
@@ -2402,6 +2759,23 @@ def parse_args() -> argparse.Namespace:
     )
     calibration_approval.add_argument("--state", required=True, type=Path)
     calibration_approval.add_argument("--user-approved", action="store_true")
+    text_revision_start = subparsers.add_parser(
+        "start-text-revision", help="Back up and open text-only revision for a completed v6 project"
+    )
+    text_revision_start.add_argument("--state", required=True, type=Path)
+    text_revision_submit = subparsers.add_parser(
+        "submit-text-revision", help="Audit and submit story/caption-only changes for user approval"
+    )
+    text_revision_submit.add_argument("--state", required=True, type=Path)
+    text_revision_approve = subparsers.add_parser(
+        "approve-text-revision", help="Approve submitted text-only changes and return to complete"
+    )
+    text_revision_approve.add_argument("--state", required=True, type=Path)
+    text_revision_approve.add_argument("--user-approved", action="store_true")
+    text_revision_revert = subparsers.add_parser(
+        "revert-text-revision", help="Restore the pre-revision text and state backup"
+    )
+    text_revision_revert.add_argument("--state", required=True, type=Path)
     reopen = subparsers.add_parser(
         "reopen-gate", help="Invalidate downstream approvals after editing an approved file"
     )
@@ -2414,8 +2788,13 @@ def parse_args() -> argparse.Namespace:
         "migrate", help="Migrate one explicitly selected unfinished state"
     )
     migrate.add_argument("--state", required=True, type=Path)
-    migrate.add_argument("--to-version", type=int, choices=(2, 3), required=True)
+    migrate.add_argument("--to-version", type=int, choices=(2, 3, 6), required=True)
     migrate.add_argument("--planned-count", type=int)
+    migrate.add_argument(
+        "--reset-first-review",
+        action="store_true",
+        help="For an explicitly selected v5 project, discard active non-calibration first-review decisions and return to scene_generation.",
+    )
     migrate.add_argument(
         "--dry-run", action="store_true", help="Validate migration without writing"
     )
@@ -2452,6 +2831,19 @@ def parse_args() -> argparse.Namespace:
     approve.add_argument("--state", required=True, type=Path)
     approve.add_argument("--number", action="append", default=[], type=int)
     approve.add_argument("--user-approved", action="store_true")
+    overview = subparsers.add_parser(
+        "submit-originals-overview",
+        help="Render the numbered first-generation overview and await the user's review choice",
+    )
+    overview.add_argument("--state", required=True, type=Path)
+    first_review = subparsers.add_parser(
+        "choose-first-review",
+        help="Choose full, selected, or skipped first-round content review",
+    )
+    first_review.add_argument("--state", required=True, type=Path)
+    first_review.add_argument("--mode", required=True, choices=("full", "selected", "skip"))
+    first_review.add_argument("--number", action="append", default=[], type=int)
+    first_review.add_argument("--user-approved", action="store_true")
     register = subparsers.add_parser(
         "register-reference-job",
         help="Register one reference asset for transport-safe generation",
@@ -2493,7 +2885,69 @@ def main() -> int:
         state_path = args.state.expanduser().resolve()
         if args.command == "migrate":
             source = load_json(state_path)
-            if args.to_version == 2:
+            if args.to_version == 6:
+                if source.get("schema_version") != 5 or source.get("phase") == "complete":
+                    raise StateError("v5 to v6 migration requires one unfinished schema-v5 project")
+                validate_v5(state_path, source)
+                payload = copy.deepcopy(source)
+                payload["schema_version"] = 6
+                payload.setdefault("artifacts", {})["originals_overview"] = V6_ARTIFACTS["originals_overview"]
+                if args.reset_first_review:
+                    calibration = set(payload.get("calibration_numbers", []))
+                    missing = [
+                        item["number"] for item in payload.get("images", [])
+                        if item.get("number") not in calibration and not item.get("candidate")
+                    ]
+                    if missing:
+                        raise StateError(
+                            f"reset-first-review requires every non-calibration original candidate: {missing}"
+                        )
+                    for item in payload.get("images", []):
+                        if item.get("number") in calibration:
+                            continue
+                        item["status"] = "candidate_ready"
+                        item["hard_failures"] = []
+                        item["photo_red_flags"] = []
+                        item["repair_count"] = 0
+                        item["repair_mode"] = None
+                        item["repair_file"] = None
+                        item["final_source"] = None
+                        item["notes"] = ""
+                        item.pop("repair_recommendation", None)
+                        versions = item.get("candidate_versions", [])
+                        if versions:
+                            versions[-1]["review"] = None
+                            versions[-1]["review_record"] = None
+                    policy = payload.setdefault("repair_policy", {})
+                    policy.update(
+                        {
+                            "report_file": None,
+                            "report_generated_at": None,
+                            "approved_numbers": [],
+                            "approved_at": None,
+                        }
+                    )
+                    payload["blocking_reasons"] = []
+                    payload["phase"] = "scene_generation"
+                reviewed_or_later = source.get("phase") in {
+                    "awaiting_repair_approval", "repairing", "final_self_review", "needs_user"
+                }
+                if not args.reset_first_review and not reviewed_or_later and source.get("phase") == "scene_self_review":
+                    calibration = set(source.get("calibration_numbers", []))
+                    has_review = any(
+                        version.get("review")
+                        for item in source.get("images", [])
+                        if item.get("number") not in calibration
+                        for version in item.get("candidate_versions", [])
+                    )
+                    if not has_review:
+                        for item in payload.get("images", []):
+                            if item.get("candidate") and item.get("number") not in calibration:
+                                item["status"] = "candidate_ready"
+                                item["final_source"] = None
+                        payload["phase"] = "scene_generation"
+                validator = validate_v6
+            elif args.to_version == 2:
                 if args.planned_count is None:
                     raise StateError("v1 to v2 migration requires --planned-count")
                 validate_v1(state_path, source)
@@ -2504,12 +2958,7 @@ def main() -> int:
                 payload = migrate_v2(source)
                 validator = validate_v3
             if args.dry_run:
-                temporary = state_path.parent / f".{state_path.name}.migration-dry-run"
-                atomic_write_json(temporary, payload)
-                try:
-                    result = validator(temporary, payload)
-                finally:
-                    temporary.unlink(missing_ok=True)
+                result = validator(state_path, payload)
                 result["dry_run"] = True
             else:
                 stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -2534,6 +2983,14 @@ def main() -> int:
             result = submit_calibration(state_path, args.contact_sheet)
         elif args.command == "approve-calibration":
             result = approve_calibration(state_path, args.user_approved)
+        elif args.command == "start-text-revision":
+            result = start_text_revision(state_path)
+        elif args.command == "submit-text-revision":
+            result = submit_text_revision(state_path)
+        elif args.command == "approve-text-revision":
+            result = approve_text_revision(state_path, args.user_approved)
+        elif args.command == "revert-text-revision":
+            result = revert_text_revision(state_path)
         elif args.command == "reopen-gate":
             result = reopen_gate(state_path, args.gate)
         elif args.command == "mark-pass":
@@ -2554,6 +3011,12 @@ def main() -> int:
         elif args.command == "authorize-repairs":
             result = authorize_repairs(
                 state_path, args.number, args.user_approved
+            )
+        elif args.command == "submit-originals-overview":
+            result = submit_originals_overview(state_path)
+        elif args.command == "choose-first-review":
+            result = choose_first_review(
+                state_path, args.mode, args.number, args.user_approved
             )
         elif args.command == "register-reference-job":
             result = register_reference_job(
@@ -2577,7 +3040,7 @@ def main() -> int:
             if args.command == "transition":
                 payload = load_json(state_path)
                 require_writable_state(payload, "transition")
-                if payload.get("schema_version") in {4, 5} and (
+                if payload.get("schema_version") in {4, 5, 6} and (
                     payload.get("phase"), args.to
                 ) in {
                     ("awaiting_realism_approval", "drafting"),

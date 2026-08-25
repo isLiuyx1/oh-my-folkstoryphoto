@@ -9,6 +9,7 @@ from typing import Any
 def eligible_job_type(phase: str) -> str | None:
     return {
         "reference_self_review": "reference",
+        "scene_generation": "scene",
         "scene_self_review": "scene",
         "repairing": "repair",
     }.get(phase)

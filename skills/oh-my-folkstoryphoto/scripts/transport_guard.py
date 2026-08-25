@@ -478,9 +478,9 @@ def validate_reference_board(
 def require_v2(state_path: Path) -> tuple[dict[str, Any], Path]:
     validate_state(state_path)
     payload = load_json(state_path)
-    if payload.get("schema_version") not in {2, 3, 4, 5}:
+    if payload.get("schema_version") not in {2, 3, 4, 5, 6}:
         raise StateError(
-            "transport_guard requires schema_version 2, 3, 4 or 5; migrate the selected "
+            "transport_guard requires schema_version 2, 3, 4, 5 or 6; migrate the selected "
             "unfinished project first"
         )
     if payload.get("schema_version") == 2 and payload.get("phase") == "complete":
@@ -499,7 +499,7 @@ def require_legacy_v2(payload: dict[str, Any], command: str) -> None:
 
 def ensure_phase_target(payload: dict[str, Any], target: str) -> None:
     phase = str(payload.get("phase"))
-    if payload.get("schema_version") == 5 and target == "scene" and phase == "calibration_self_review":
+    if payload.get("schema_version") in {5, 6} and target == "scene" and phase == "calibration_self_review":
         return
     current = eligible_job_type(phase)
     if current != target:
@@ -512,7 +512,7 @@ def ensure_phase_target(payload: dict[str, Any], target: str) -> None:
 def reconcile_recovery_transactions(
     state_path: Path, payload: dict[str, Any], project_dir: Path
 ) -> list[dict[str, Any]]:
-    if payload.get("schema_version") not in {3, 4, 5}:
+    if payload.get("schema_version") not in {3, 4, 5, 6}:
         return []
     reconciled: list[dict[str, Any]] = []
     changed = False
@@ -741,7 +741,7 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
     reference_kinds = [value.strip() for value in getattr(args, "reference_kind", []) if value.strip()]
     capture_id = getattr(args, "capture_id", None)
     device_visibility = getattr(args, "device_visibility", None)
-    if payload.get("schema_version") == 5:
+    if payload.get("schema_version") in {5, 6}:
         if payload.get("phase") == "calibration_self_review" and args.number not in payload.get("calibration_numbers", []):
             raise StateError("only the three registered calibration images may generate before calibration approval")
         if not capture_id or not device_visibility:
@@ -787,7 +787,7 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
     }[args.backend]
     route = args.route or default_route
     model = args.model
-    if payload.get("schema_version") != 5:
+    if payload.get("schema_version") not in {5, 6}:
         validate_reference_board_safe_prompt(prompt, payload, references, repair_mode)
 
     if repair_mode:
@@ -815,7 +815,7 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
                 raise StateError(
                     "all original candidates must exist before deferred repairs begin"
                 )
-    elif item["status"] in {"pass", "review_pending", "needs_user"}:
+    elif item["status"] in {"pass", "candidate_ready", "review_pending", "needs_user"}:
         raise StateError(
             f"image {args.number} status {item['status']} is not eligible for generation"
         )
@@ -858,9 +858,9 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
         reference_kinds,
         capture_id,
         device_visibility,
-        authored_prompt if payload.get("schema_version") == 5 else None,
+        authored_prompt if payload.get("schema_version") in {5, 6} else None,
     )
-    if payload.get("schema_version") == 5 and repair_mode == "regenerate":
+    if payload.get("schema_version") in {5, 6} and repair_mode == "regenerate":
         original_path = request_path(project_dir, args.number)
         if not original_path.is_file():
             raise StateError("v5 regenerate repair requires the original request snapshot")
@@ -1291,7 +1291,7 @@ def record_failure(args: argparse.Namespace) -> dict[str, Any]:
         duration = supplied_elapsed
     budget = int(active.get("runtime_budget_seconds", IMAGE_CALL_TIMEOUT_SECONDS))
     if (
-        payload.get("schema_version") in {3, 4, 5}
+        payload.get("schema_version") in {3, 4, 5, 6}
         and args.error_type == "timeout"
         and (duration is None or duration < budget)
     ):
@@ -1487,8 +1487,11 @@ def record_success(args: argparse.Namespace) -> dict[str, Any]:
             f"image {args.number} must be generating before recording success"
         )
     candidate = args.candidate.expanduser().resolve()
-    candidate_details = validate_image(candidate, "candidate")
-    require_exact_4x5(candidate_details, "candidate")
+    if payload.get("schema_version") == 6 and payload.get("phase") == "scene_generation":
+        candidate_details = {"path": str(candidate)}
+    else:
+        candidate_details = validate_image(candidate, "candidate")
+        require_exact_4x5(candidate_details, "candidate")
     try:
         candidate_relative = str(candidate.relative_to(project_dir))
     except ValueError as exc:
@@ -1552,12 +1555,12 @@ def record_success(args: argparse.Namespace) -> dict[str, Any]:
         item["repair_count"] = 1
         item["repair_mode"] = repair_mode
         item["repair_file"] = candidate_relative
-        if payload.get("schema_version") == 5:
+        if payload.get("schema_version") in {5, 6}:
             item["hard_failures"] = []
             item["photo_red_flags"] = []
     else:
         item["candidate"] = candidate_relative
-    if payload.get("schema_version") == 5:
+    if payload.get("schema_version") in {5, 6}:
         versions = item.setdefault("candidate_versions", [])
         versions.append(
             {
@@ -1571,7 +1574,13 @@ def record_success(args: argparse.Namespace) -> dict[str, Any]:
                 "review_record": None,
             }
         )
-    item["status"] = "review_pending"
+    item["status"] = (
+        "candidate_ready"
+        if payload.get("schema_version") == 6
+        and payload.get("phase") == "scene_generation"
+        and not repair_mode
+        else "review_pending"
+    )
     batch = batch_record(payload)
     if batch_is_active(batch):
         batch["success_count"] = batch.get("success_count", 0) + 1
@@ -1581,7 +1590,7 @@ def record_success(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "command": "record-success",
         "image_number": args.number,
-        "status": "review_pending",
+        "status": item["status"],
         "candidate": candidate_details,
         "repair_mode": repair_mode,
         "backend_circuit_open": False,
@@ -2696,7 +2705,7 @@ def record_reference_failure(args: argparse.Namespace) -> dict[str, Any]:
     if payload.get("schema_version") == 2 and supplied_elapsed is not None:
         duration = supplied_elapsed
     budget = int(active.get("runtime_budget_seconds", IMAGE_CALL_TIMEOUT_SECONDS))
-    if payload.get("schema_version") in {3, 4, 5} and args.error_type == "timeout" and (
+    if payload.get("schema_version") in {3, 4, 5, 6} and args.error_type == "timeout" and (
         duration is None or duration < budget
     ):
         raise StateError(
@@ -2878,7 +2887,7 @@ def record_reference_success(args: argparse.Namespace) -> dict[str, Any]:
     )
     job["candidate"] = relative
     job["status"] = "review_pending"
-    if payload.get("schema_version") in {3, 4, 5}:
+    if payload.get("schema_version") in {3, 4, 5, 6}:
         versions = job.setdefault("candidate_versions", [])
         if not any(entry.get("candidate") == relative for entry in versions):
             versions.append(
